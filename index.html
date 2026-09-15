@@ -1,0 +1,2958 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>WoodMood — démo</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#4a5560">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    /* ── Base ── */
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:#000;
+      min-height:100vh;padding:12px;
+    }
+    .wrap{max-width:480px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+
+    /* ── Cards ── */
+    .card{background:#fff;border-radius:18px;padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    .card-warm{background:#CD853F;color:#fff;border-radius:18px;padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+
+    /* ── Header ── */
+    .logo{color:#949494;display:flex;align-items:center;
+      filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
+    .logo svg{height:24px;width:auto;display:block;fill:currentColor}
+    .status-badge{display:flex;align-items:center;gap:7px;font-size:.82rem;color:#fff;
+      background:rgba(0,0,0,.3);border-radius:20px;padding:6px 14px;cursor:pointer}
+    .status-dot{width:11px;height:11px;border-radius:50%;background:#e74c3c;
+      transition:background .4s;flex-shrink:0}
+    .status-dot.connecting{background:#f39c12;animation:blink .8s infinite alternate}
+    .status-dot.connected {background:#f39c12}        /* orange = MQTT ok, pas de heartbeat */
+    .status-dot.alive     {background:#2ecc71;animation:hbpulse 1.2s infinite} /* vert = heartbeat */
+    @keyframes blink   {to{opacity:.3}}
+    @keyframes hbpulse {50%{opacity:.4}}
+
+    /* ── Connection panel ── */
+    .conn-input{padding:9px 12px;border:1px solid #d0b08a;border-radius:8px;font-size:.9rem;width:100%}
+    .conn-input:focus{outline:none;border-color:#8B4513}
+
+    /* ── System state button ── */
+    .sys-btn{width:100%;border:none;border-radius:12px;font-size:1rem;font-weight:700;
+      padding:14px;letter-spacing:.03em;transition:filter .15s}
+    .sys-btn.startup  {background:#d4a04a;color:#fff;cursor:pointer}
+    .sys-btn.startup:hover{filter:brightness(1.08)}
+    .sys-btn.auto     {background:#27ae60;color:#fff;cursor:pointer}
+    .sys-btn.auto:hover{filter:brightness(1.08)}
+    .sys-btn.cooldown {background:#2980b9;color:#fff;cursor:pointer}
+    .sys-btn.cooldown:hover{filter:brightness(1.1)}
+    .sys-btn.standby  {background:#7f8c8d;color:#fff;cursor:pointer}
+    .sys-btn.standby:hover{filter:brightness(1.1)}
+    .sys-btn.fault    {background:#c0392b;color:#fff;cursor:default;
+      animation:faultpulse 2s infinite alternate}
+    @keyframes faultpulse{to{background:#922b21}}
+
+    /* ── Fault banner ── */
+    #fault-banner{display:none;background:#c0392b;color:#fff;border-radius:18px;
+      padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.4)}
+    #fault-banner.show{display:block}
+    .fault-title{font-size:1.05rem;font-weight:700;margin-bottom:6px}
+    .fault-side-badge{display:inline-block;background:rgba(255,255,255,.2);border-radius:8px;padding:3px 10px;font-size:.8rem;font-weight:600;margin-bottom:8px;letter-spacing:.04em}
+    .fault-msg{font-size:.84rem;opacity:.85;margin-bottom:10px}
+    .btn-countdown{background:rgba(255,255,255,.2);color:#fff;border:2px solid rgba(255,255,255,.4);cursor:default;font-size:.95rem}
+    .fault-resolve-group{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+    .btn-resolve{background:#27ae60;font-size:1rem;font-weight:700}
+    .btn-reopen{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.4);font-size:.82rem}
+
+    /* ── Joint (gasket) service banner — same slot as the fault banner ── */
+    #joint-banner{display:none;background:#5a3410;color:#fff;border-radius:18px;
+      padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    #joint-banner.show{display:block}
+    .joint-title{font-size:1.05rem;font-weight:700;margin-bottom:6px}
+    .joint-side-badge{display:inline-block;background:rgba(255,255,255,.2);border-radius:8px;padding:3px 10px;font-size:.8rem;font-weight:600;margin-bottom:8px;letter-spacing:.04em}
+    .joint-msg{font-size:.84rem;opacity:.85;margin-bottom:12px}
+    .joint-btn-row{display:flex;gap:8px}
+    .joint-btn-row .btn{flex:1}
+    .btn-cancel{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.4)}
+
+    /* ── Buttons ── */
+    .btn{border:none;border-radius:10px;font-size:.9rem;font-weight:600;
+      cursor:pointer;padding:10px 14px;transition:filter .15s;flex:1}
+    .btn:hover{filter:brightness(1.1)}
+    .btn:active{filter:brightness(.9)}
+    .btn-brown {background:#8B4513;color:#fff}
+    .btn-green {background:#28a745;color:#fff}
+    .btn-red   {background:#dc3545;color:#fff}
+    .btn-orange{background:#e67e22;color:#fff}
+    .btn-blue  {background:#2980b9;color:#fff}
+    .btn-gray  {background:#7f8c8d;color:#fff}
+    .btn-tan   {background:#c98a4b;color:#fff}
+    .btn-sm    {padding:7px 10px;font-size:.82rem}
+    .btn-full  {width:100%}
+    .row-btns  {display:flex;gap:8px}
+
+    /* ── Temperature card ── */
+    .adj-btn{width:44px;height:44px;font-size:1.3rem;padding:0;border-radius:10px;
+      border:none;background:#8B4513;color:#fff;cursor:pointer;flex-shrink:0;
+      font-weight:700;transition:filter .15s}
+    .adj-btn:hover{filter:brightness(1.1)}
+    /* Paire principale — température ambiante actuelle + température souhaitée */
+    .main-temps-row{display:flex;margin-bottom:10px}
+    .main-temp-half{flex:1;display:flex;flex-direction:column;align-items:center;
+      justify-content:center;padding:8px 6px}
+    .main-temp-half+.main-temp-half{border-left:1px solid rgba(255,255,255,.25)}
+    .wanted-controls{display:flex;align-items:center;gap:10px}
+    #room-val{font-size:2.6rem;font-weight:700;line-height:1;min-width:70px;text-align:center;
+      transition:color .25s ease,opacity .25s ease}
+    /* Grisé quand c'est la programmation qui pilote le niveau (room_src="sched").
+       Un réglage manuel — permanent ou temporaire — reste en pleine teinte. */
+    #room-val.sched-driven{opacity:.45}
+    .temp-big{font-size:2.6rem;font-weight:700;line-height:1}
+    .temp-small-label{font-size:.65rem;opacity:.65;margin-top:6px;line-height:1.35;
+      text-transform:uppercase;letter-spacing:.04em}
+    /* Internes du poêle — ligne technique discrète */
+    .stove-tech-row{display:flex;align-items:center;justify-content:center;gap:6px;
+      border-top:1px solid rgba(255,255,255,.18);padding-top:9px;
+      font-size:.75rem;opacity:.5;letter-spacing:.02em}
+
+    /* ── Log cartridges ── */
+    .cart-grid{display:grid;grid-template-columns:1fr 56px 1fr;gap:0;align-items:start}
+    .cart-col{display:flex;flex-direction:column;align-items:center;gap:5px}
+    .cart-col.left {border-right:1px solid #f0e0d0;padding-right:10px}
+    .cart-col.right{border-left: 1px solid #f0e0d0;padding-left: 10px}
+    .cart-title{font-size:.75rem;font-weight:700;color:#666;text-transform:uppercase;
+      letter-spacing:.06em;margin-bottom:2px}
+    .bars{display:flex;flex-direction:column-reverse;gap:5px;align-items:center;
+      min-height:186px;justify-content:flex-start;padding-top:2px;width:100%}
+    .bar{width:100%;height:26px;border-radius:6px;background:#8B7355;transition:opacity .4s}
+    .bar.empty{background:transparent;border:2px dashed #d9c8b8}
+    .cart-count{font-size:.9rem;font-weight:700;color:#8B4513}
+    .cart-btn-stack{display:flex;flex-direction:column;gap:5px;width:100%;margin-top:4px}
+    .cart-btn-stack .btn{font-size:.76rem;padding:8px 4px;width:100%;flex:none}
+    .time-col{display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:12px 0;margin-top:70px;color:#8B4513}
+    .time-label{font-size:.6rem;font-weight:700;text-transform:uppercase;
+      letter-spacing:.06em;color:#aaa;margin-bottom:5px;text-align:center}
+    .time-val{font-size:1.15rem;font-weight:700;color:#8B4513;text-align:center}
+    .time-unit{font-size:.64rem;color:#bbb;text-align:center}
+
+    /* ── Settings ── */
+    .settings-toggle{display:flex;align-items:center;justify-content:space-between;
+      cursor:pointer;user-select:none}
+    .settings-toggle .arrow{transition:transform .25s;font-size:.9rem;color:#8B4513}
+    .settings-toggle .arrow.open{transform:rotate(180deg)}
+    .settings-body{display:none;margin-top:14px;border-top:1px solid #f0e0d0;
+      padding-top:16px;flex-direction:column;gap:18px}
+    .settings-body.open{display:flex}
+    .settings-section{font-size:.72rem;color:#bbb;font-weight:700;text-transform:uppercase;
+      letter-spacing:.08em;margin-bottom:8px}
+    /* Alert rows */
+    .alert-row{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;
+      padding:10px;background:#f9f5f1;border-radius:10px}
+    .alert-fields{display:flex;flex-direction:column;gap:5px}
+    .alert-fields input,.alert-fields select{padding:7px 10px;border:1px solid #d0b08a;border-radius:7px;
+      font-size:.84rem;width:100%}
+    .alert-fields input:focus,.alert-fields select:focus{outline:none;border-color:#8B4513}
+    input[type=checkbox]{width:19px;height:19px;accent-color:#8B4513;cursor:pointer;
+      margin-left:4px}
+    /* Maintenance rows */
+    .maint-row{display:flex;align-items:center;gap:8px;padding:9px 12px;
+      background:#f9f5f1;border-radius:10px;font-size:.88rem;color:#555}
+    .maint-lbl{flex:1}
+    .maint-val{font-weight:700;color:#8B4513;white-space:nowrap}
+    /* Un élément d'entretien = la ligne résumé + le volet d'édition, repliés
+       dans un même bloc pour qu'ils restent visuellement solidaires. */
+    .maint-item{background:#f9f5f1;border-radius:10px;overflow:hidden}
+    /* Le libellé prend toute la largeur : sur un écran de téléphone, « Remplacer
+       le joint de porte » + « il y a 34 jours (30/07/2026) » + deux boutons ne
+       tiennent pas sur une ligne, et le dernier bouton sortait de la carte. */
+    .maint-item .maint-row{background:none;border-radius:0;flex-wrap:wrap;gap:6px 8px}
+    .maint-item .maint-lbl{flex:1 1 100%;font-weight:600;color:#4a4038}
+    .maint-item .maint-val{flex:1 1 auto;min-width:0;white-space:normal}
+    .maint-item .maint-row .btn{flex:0 0 auto}
+    .maint-note{padding:0 12px 9px;font-size:.76rem;color:#7a6a5c;font-style:italic;
+      word-break:break-word}
+    .maint-note:empty{display:none}
+    .maint-edit{display:none;flex-direction:column;gap:7px;padding:0 12px 11px;
+      border-top:1px solid #efe3d6;margin-top:2px;padding-top:10px}
+    .maint-edit.show{display:flex}
+    .maint-edit label{font-size:.72rem;font-weight:700;color:#8B4513;
+      text-transform:uppercase;letter-spacing:.05em}
+    .maint-edit input{width:100%;box-sizing:border-box;padding:8px 10px;
+      border:1px solid #d0b08a;border-radius:8px;font-size:.86rem;
+      font-family:inherit;color:#5a3015;background:#fff}
+    .maint-edit input:focus{outline:none;border-color:#8B4513}
+    .maint-edit-actions{display:flex;gap:8px}
+    .maint-edit-actions .btn{flex:1}
+    /* .btn-cancel global est pensé pour la bannière brune (blanc translucide) :
+       illisible sur cette carte claire, on le redéfinit localement. */
+    .maint-edit-actions .btn-cancel{background:#fff;color:#8a7a6c;border:1px solid #d9c8b5}
+    .maint-hint{font-size:.7rem;color:#8a7a6c;margin-top:-2px}
+    /* House params */
+    .param-row{display:flex;align-items:center;gap:8px}
+    .param-row label{font-size:.82rem;color:#555;white-space:nowrap}
+    .param-row input[type=number]{flex:1;padding:7px 10px;border:1px solid #d0b08a;
+      border-radius:7px;font-size:.9rem}
+    .param-row input:focus{outline:none;border-color:#8B4513}
+    .ins-wrap{display:flex;gap:6px;margin-top:2px}
+    .ins-btn{border:2px solid #d0b08a;background:#fff;border-radius:8px;padding:7px 14px;
+      font-size:.82rem;cursor:pointer;color:#666;transition:all .15s;font-weight:500}
+    .ins-btn.active{border-color:#8B4513;background:#8B4513;color:#fff;font-weight:700}
+
+    /* ── Offline overlay ── */
+    #offline-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+      z-index:100;align-items:center;justify-content:center}
+    #offline-overlay.show{display:flex}
+    .offline-box{background:#fff;border-radius:18px;padding:24px;max-width:300px;text-align:center}
+    .offline-box h2{color:#c0392b;margin-bottom:8px}
+    .offline-box p{font-size:.88rem;color:#555;margin-bottom:16px}
+    /* ── Modale nombre de bûches / choix du côté ── */
+    #log-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+      z-index:150;align-items:center;justify-content:center;padding:20px}
+    #log-modal.show{display:flex}
+    .log-modal-box{background:#fff;border-radius:18px;padding:22px;max-width:320px;width:100%;text-align:center}
+    .log-modal-box h3{color:#8B4513;margin-bottom:14px;font-size:1rem}
+    .log-modal-input{width:100%;box-sizing:border-box;padding:11px;border:1px solid #d0b08a;border-radius:10px;
+      font-size:1.4rem;font-weight:700;text-align:center;color:#8B4513;-moz-appearance:textfield;margin-bottom:16px}
+    .log-modal-input:focus{outline:none;border-color:#8B4513}
+    .log-modal-input::-webkit-outer-spin-button,.log-modal-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+    .log-modal-actions{display:flex;gap:10px}
+    .log-modal-actions .btn{flex:1}
+
+    /* ── Conditions d'utilisation ── */
+    /* Le grisé est volontairement limité au bouton Connecter : d'autres boutons
+       de l'application se désactivent temporairement et ont déjà leur propre
+       apparence, on ne veut pas les repeindre au passage. */
+    #conn-btn:disabled{background:#cbc0b4;color:#f2ece6;cursor:not-allowed;filter:none}
+    .agree-link{display:block;text-align:center;font-size:.86rem;font-weight:600;
+      color:#8B4513;background:#f9f5f1;border:1px solid #e6d6c4;border-radius:8px;
+      padding:9px 10px;cursor:pointer;user-select:none}
+    .agree-row{display:flex;align-items:flex-start;gap:9px;font-size:.82rem;
+      color:#5a3015;line-height:1.4;cursor:pointer}
+    .agree-row input{width:19px;height:19px;flex:none;margin-top:1px;accent-color:#8B4513}
+    .agree-row input:disabled{cursor:not-allowed}
+    .agree-row input:disabled ~ span{color:#a89a8c}
+    .agree-changed{display:none;background:#fff4e0;border-left:4px solid #e67e22;
+      border-radius:0 8px 8px 0;padding:9px 11px;font-size:.8rem;color:#8a5a20;line-height:1.4}
+    .agree-changed.show{display:block}
+    /* Modale conditions : quasi plein écran — c'est un document à lire, pas une
+       boîte de dialogue. L'affichage dans un cadre évite de sortir de l'app
+       installée sur l'écran d'accueil (sur iOS, un lien externe bascule sur
+       Safari et l'utilisateur ne revient pas toujours). */
+    #agree-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+      z-index:160;align-items:center;justify-content:center;padding:14px}
+    #agree-modal.show{display:flex}
+    .agree-box{background:#fff;border-radius:18px;width:100%;max-width:520px;
+      height:100%;max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+    .agree-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+      padding:13px 16px;border-bottom:1px solid #f0e0d0}
+    .agree-head h3{color:#8B4513;font-size:.95rem}
+    .agree-head a{font-size:.74rem;color:#8a7a6c;white-space:nowrap}
+    .agree-frame{flex:1;width:100%;border:none;background:#f9f5f1}
+    .agree-foot{padding:12px 16px;border-top:1px solid #f0e0d0}
+
+    /* ── Misc ── */
+    .section-title{font-size:.75rem;font-weight:700;color:#8B4513;text-transform:uppercase;
+      letter-spacing:.07em;margin-bottom:12px}
+    .divider{border:none;border-top:1px solid #f0e0d0;margin:0}
+    .gap-col{display:flex;flex-direction:column;gap:8px}
+
+    /* ── Mode silencieux ── */
+    #silence-toggle:checked + .tgl-sl{background:#c0392b}
+
+    /* ── Bouton de maintenance (aide) ── */
+    .mbtn-tbl{border:1px solid #f0e0d0;border-radius:10px;overflow:hidden}
+    .mbtn-hd{padding:7px 10px;font-size:.7rem;font-weight:700;
+      text-transform:uppercase;letter-spacing:.06em}
+    .mbtn-hd.fault{background:#fdecea;color:#c0392b}
+    .mbtn-hd.ok{background:#f2f6ef;color:#4a7c2f;border-top:1px solid #f0e0d0}
+    .mbtn-row{display:grid;grid-template-columns:78px 1fr;gap:10px;padding:8px 10px;
+      font-size:.79rem;line-height:1.4;border-top:1px solid #f7ece1;align-items:start}
+    .mbtn-row b{color:#8B4513;font-weight:700;white-space:nowrap}
+    .mbtn-row span{color:#666}
+    .mbtn-note{font-size:.72rem;color:#999;line-height:1.5;margin-top:8px}
+
+    /* ── Interrupteur à bascule ── */
+    .tgl{position:relative;display:inline-block;width:48px;height:27px;flex-shrink:0}
+    .tgl input{opacity:0;width:0;height:0}
+    .tgl-sl{position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:27px;transition:.25s}
+    .tgl-sl:before{content:"";position:absolute;height:21px;width:21px;left:3px;bottom:3px;
+      background:#fff;border-radius:50%;transition:.25s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+    input:checked + .tgl-sl{background:#27ae60}
+    input:checked + .tgl-sl:before{transform:translateX(21px)}
+
+    /* ── Programmation de température ── */
+    .sched-pt{cursor:ns-resize}
+    .sched-badge{font-size:.62rem;font-weight:700;color:#8B4513;background:rgba(139,69,19,.1);
+      border-radius:20px;padding:1px 7px;margin-top:3px;display:none;letter-spacing:.02em}
+    .sched-badge.active{display:inline-block}
+    .sched-tabs{display:flex;gap:4px;background:#f0e6da;border-radius:9px;padding:3px;margin-bottom:10px}
+    .sched-tab{flex:1;border:0;background:transparent;color:#8a6a4f;font-size:.8rem;font-weight:700;
+      padding:6px 0;border-radius:7px;cursor:pointer;transition:.2s;font-family:inherit}
+    .sched-tab.active{background:#8B4513;color:#fff;box-shadow:0 1px 3px rgba(139,69,19,.3)}
+
+    /* ── Toast ── */
+    #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+      background:#2b1a0e;color:#f0d9c0;padding:10px 20px;border-radius:20px;
+      font-size:.84rem;font-weight:600;opacity:0;pointer-events:none;
+      transition:opacity .3s;z-index:200;white-space:nowrap}
+    #toast.show{opacity:1}
+
+    /* ── Moniteur heap ── */
+    .heap-row{display:flex;align-items:center;gap:10px;padding:7px 12px;
+      background:rgba(0,0,0,.28);border-radius:10px;font-size:.72rem;
+      color:rgba(255,255,255,.75)}
+    .heap-lbl{opacity:.7;white-space:nowrap}
+    .heap-bar-wrap{flex:1;background:rgba(255,255,255,.18);border-radius:4px;height:5px;overflow:hidden}
+    .heap-bar-fill{height:100%;border-radius:4px;transition:width .6s,background .6s;background:#2ecc71;width:0%}
+    .heap-val{font-weight:700;white-space:nowrap;min-width:48px;text-align:right}
+
+    /* ── Bandeau de démonstration ──
+       Volontairement impossible à manquer et NON masquable. Cette app parle à
+       un vrai poêle : quelqu'un qui croit être sur la version stable pourrait
+       tester une insertion manuelle sur le poêle d'un client. */
+    .demo-bar{background:#4a5560;color:#fff;border-radius:12px;padding:9px 12px;
+      margin-bottom:10px;font-size:.76rem;line-height:1.35;
+      border:1px solid rgba(255,255,255,.18)}
+    .demo-bar b{display:block;font-size:.82rem;letter-spacing:.06em;margin-bottom:2px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── Bandeau de démonstration (absent de l'app de production) ── -->
+  <div class="demo-bar">
+    <b>⚙️ BUILD DE DÉMONSTRATION</b>
+    Version de test — fonctionnalités en cours de validation. L'application
+    stable des clients reste sur app.connectwoodmood.com. Les réglages saisis
+    ici sont stockés séparément.
+  </div>
+
+  <!-- ── Header ── -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 2px">
+    <div class="logo">
+      <svg viewBox="0 0 415.885 92.604" role="img" aria-label="WoodMood">
+        <path d="M7.999,0L39.76,0C45.67,0 53.161,4.791 56.492,10.7L96.634,81.904C99.965,87.813 97.875,92.604 91.966,92.604L60.205,92.604C54.295,92.604 46.804,87.813 43.473,81.904L3.331,10.7C0,4.791 2.09,0 7.999,0Z"/>
+        <path d="M67.658,0L99.589,0C105.499,0 113.001,4.791 116.345,10.7L156.643,81.904C159.987,87.813 157.908,92.604 151.999,92.604L120.068,92.604C114.158,92.604 106.656,87.813 103.312,81.904L63.014,10.7C59.67,4.791 61.749,0 67.658,0Z"/>
+        <path d="M218.053,0L249.885,0C255.794,0 257.879,4.791 254.542,10.7L214.332,81.904C210.995,87.813 203.499,92.604 197.589,92.604L165.757,92.604C159.848,92.604 157.763,87.813 161.1,81.904L201.31,10.7C204.647,4.791 212.143,0 218.053,0Z"/>
+        <path d="M276.453,0L308.272,0C314.182,0 316.265,4.791 312.924,10.7L272.676,81.904C269.336,87.813 261.837,92.604 255.928,92.604L224.108,92.604C218.199,92.604 216.116,87.813 219.457,81.904L259.705,10.7C263.045,4.791 270.543,0 276.453,0Z"/>
+        <path d="M323.848,0L355.634,0C361.543,0 369.037,4.791 372.372,10.7L412.551,81.904C415.885,87.813 413.798,92.604 407.888,92.604L376.102,92.604C370.193,92.604 362.699,87.813 359.365,81.904L319.186,10.7C315.851,4.791 317.938,0 323.848,0Z"/>
+      </svg>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="status-badge" onclick="toggleConnPanel()">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-label">Déconnecté</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Connection panel ── -->
+  <div class="card" id="conn-card">
+    <div class="section-title">Connexion au courtier</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input class="conn-input" id="cfg-serial" placeholder="Numéro de série  ex. JJQF9D"
+             autocapitalize="characters" autocorrect="off" spellcheck="false"/>
+      <input class="conn-input" id="cfg-pass"   placeholder="Mot de passe" type="password"/>
+      <div class="agree-changed" id="agree-changed">
+        Les conditions d'utilisation ont été mises à jour. Merci de les relire et de
+        les accepter pour vous reconnecter.
+      </div>
+      <div class="agree-link" id="agree-open" onclick="openAgreement()">📄 Lire les conditions d'utilisation</div>
+      <label class="agree-row">
+        <input type="checkbox" id="agree-box" disabled onchange="refreshAgreementUi()"/>
+        <span id="agree-text">Ouvrez d'abord les conditions ci-dessus</span>
+      </label>
+      <button class="btn btn-brown btn-full" id="conn-btn" onclick="saveAndConnect()" disabled>Connecter</button>
+    </div>
+  </div>
+
+  <!-- ── System state ── -->
+  <div id="sys-state-card" class="card" style="padding:12px">
+    <button class="sys-btn startup" id="sys-btn" onclick="sysButtonClick()">Démarrage</button>
+  </div>
+
+  <!-- ── Fault banner ── -->
+  <div id="fault-banner">
+    <div class="fault-title">⚠️ DÉFAUT DÉTECTÉ</div>
+    <div class="fault-side-badge" id="fault-side-badge">— Côté</div>
+    <div class="fault-msg" id="fault-msg-text">Bûche coincée dans la trappe — suivez les étapes ci-dessous</div>
+    <!-- Phase 1 : déverrouiller la porte -->
+    <div id="fault-phase-1">
+      <button class="btn btn-orange btn-full" onclick="faultUnlockDoor()">
+        🔓 Déverrouiller la porte <span class="fault-side-name">—</span>
+      </button>
+    </div>
+    <!-- Phase 2 : décompte pendant que la porte est maintenue ouverte -->
+    <div id="fault-phase-2" style="display:none">
+      <button class="btn btn-countdown btn-full" disabled>
+        Gardez la porte ouverte… <span id="fault-countdown">10</span>s
+      </button>
+    </div>
+    <!-- Phase 3 : prêt à résoudre -->
+    <div id="fault-phase-3" style="display:none" class="fault-resolve-group">
+      <button class="btn btn-resolve btn-full" onclick="resolveFault()">✓ Résoudre le défaut</button>
+      <button class="btn btn-reopen btn-full" onclick="faultUnlockDoor()">
+        🔓 Déverrouiller à nouveau la porte <span class="fault-side-name">—</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Joint service banner (same slot as the fault banner) ── -->
+  <div id="joint-banner">
+    <!-- Vue 1 : choix du côté -->
+    <div id="joint-choose">
+      <div class="joint-title">🔧 Changer le joint — quel côté ?</div>
+      <div class="joint-msg">La trappe s'ouvre partiellement et la porte se déverrouille. Le poêle doit être à l'arrêt et froid.</div>
+      <div class="joint-btn-row">
+        <button class="btn btn-tan"    onclick="jointStart('l')">Gauche</button>
+        <button class="btn btn-brown"  onclick="jointStart('r')">Droite</button>
+        <button class="btn btn-cancel" onclick="jointCancel()">Annuler</button>
+      </div>
+    </div>
+    <!-- Vue 2 : service en cours -->
+    <div id="joint-progress" style="display:none">
+      <div class="joint-title">🔧 Changement de joint en cours</div>
+      <div class="joint-side-badge">Côté <span id="joint-side-lbl">—</span></div>
+      <div class="joint-msg">La trappe est ouverte et la porte déverrouillée. Remplacez le joint, refermez la porte de chargement, puis appuyez sur Terminé.</div>
+      <button class="btn btn-resolve btn-full" onclick="jointDone()">✓ J'ai terminé</button>
+    </div>
+  </div>
+
+  <!-- ── Temperature ── -->
+  <div class="card-warm">
+    <!-- Principale : température ambiante BLE + température souhaitée -->
+    <div class="main-temps-row">
+      <div class="main-temp-half">
+        <div class="temp-big" id="ble-room-temp" style="opacity:.5">—°</div>
+        <div class="temp-small-label" id="ble-room-label">Température actuelle</div>
+      </div>
+      <div class="main-temp-half">
+        <div class="wanted-controls">
+          <button class="adj-btn" onclick="adjustRoom(-1)">−</button>
+          <div id="room-val">T1</div>
+          <button class="adj-btn" onclick="adjustRoom(+1)">+</button>
+        </div>
+        <div class="temp-small-label">Température souhaitée</div>
+        <div class="sched-badge" id="sched-badge">📅 Programmé</div>
+      </div>
+    </div>
+    <!-- Secondaire : internes du poêle (discrets) -->
+    <div class="stove-tech-row">
+      <span>Poêle <span id="stove-temp">—°</span></span>
+      <span style="opacity:.5">·</span>
+      <span>Consigne <span id="setpoint-val">—°</span></span>
+    </div>
+  </div>
+
+  <!-- ── Log Cartridges ── -->
+  <div class="card">
+    <div class="section-title">Cassettes de bûches</div>
+    <div class="cart-grid">
+
+      <!-- Gauche -->
+      <div class="cart-col left">
+        <div class="cart-title">Gauche</div>
+        <div class="bars" id="bars-left"></div>
+        <div class="cart-count" id="count-left">—</div>
+        <div class="cart-btn-stack">
+          <button class="btn btn-green"  onclick="unlockDoor('l')">Déverrouiller</button>
+          <button class="btn btn-orange" onclick="publish('cmd/motor_home',mapSide('l'))">Rembobiner</button>
+          <button class="btn btn-brown"  onclick="updateLogCount('l')">Mettre à jour</button>
+        </div>
+      </div>
+
+      <!-- Temps restant -->
+      <div class="time-col">
+        <div class="time-label">Temps<br>restant</div>
+        <div class="time-val" id="burn-time-val">—</div>
+        <div class="time-unit" id="burn-time-unit">estimé</div>
+      </div>
+
+      <!-- Droite -->
+      <div class="cart-col right">
+        <div class="cart-title">Droite</div>
+        <div class="bars" id="bars-right"></div>
+        <div class="cart-count" id="count-right">—</div>
+        <div class="cart-btn-stack">
+          <button class="btn btn-green"  onclick="unlockDoor('r')">Déverrouiller</button>
+          <button class="btn btn-orange" onclick="publish('cmd/motor_home',mapSide('r'))">Rembobiner</button>
+          <button class="btn btn-brown"  onclick="updateLogCount('r')">Mettre à jour</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Options ── -->
+  <div class="card">
+    <div class="settings-toggle" onclick="toggleOptions()">
+      <span style="font-weight:700;color:#8B4513">Options</span>
+      <span class="arrow" id="options-arrow">▼</span>
+    </div>
+    <div class="settings-body" id="options-body">
+      <div>
+        <!-- ── Rapport quotidien des bûches ──
+             DÉSACTIVÉ (juil. 2026) : le rapport est maintenant envoyé par le
+             poêle via ntfy, à heure fixe (NTFY_DAILY_HOUR dans le firmware,
+             20:00). Ce réglage d'heure ne pilotait que l'ancienne notification
+             de l'application — le laisser affiché laisserait croire qu'il agit
+             encore sur quelque chose. À réactiver si l'heure devient
+             configurable par MQTT.
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:.85rem;font-weight:600;color:#5a3015">Rapport quotidien des bûches</span>
+          <label class="tgl"><input type="checkbox" id="tog-daily-report" onchange="setDailyReportEnabled(this.checked)"><span class="tgl-sl"></span></label>
+        </div>
+        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Recevez chaque jour, à l'heure choisie, un récapitulatif des bûches restantes et de la température — envoyé uniquement lorsque le poêle est en marche (automatique).</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:.82rem;font-weight:600;color:#5a3015">Heure d'envoi</span>
+          <input type="time" id="daily-report-time" value="20:00" onchange="setDailyReportTime(this.value)"
+                 style="flex:none;padding:6px 8px;border:1px solid #d8c4b0;border-radius:8px;font-size:.9rem;color:#5a3015;background:#fff">
+        </div>
+        <div id="daily-report-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
+        ── fin du bloc désactivé ── -->
+
+        <!-- ── Programmation de température ── -->
+        <div class="divider" style="margin:16px 0 12px"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span style="font-size:.85rem;font-weight:600;color:#5a3015">Activer la programmation</span>
+          <label class="tgl"><input type="checkbox" id="tog-sched-enable" onchange="setSchedEnabled(this.checked)"><span class="tgl-sl"></span></label>
+        </div>
+        <div class="settings-section">Programmation de température</div>
+        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Faites glisser les points pour régler le confort par tranche de 2h (T1–T6)</div>
+        <div class="sched-tabs">
+          <button type="button" class="sched-tab active" id="sched-tab-week"    onclick="setSchedEditMode('week')">Semaine</button>
+          <button type="button" class="sched-tab"        id="sched-tab-weekend" onclick="setSchedEditMode('weekend')">Week-end</button>
+        </div>
+        <svg id="schedule-svg" width="100%" viewBox="-8 0 340 155" style="display:block;touch-action:none;overflow:visible"></svg>
+        <div id="sched-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
+        <button class="btn btn-brown btn-sm btn-full" style="margin-top:8px" onclick="saveSchedule()">Enregistrer et appliquer</button>
+
+        <!-- ── Mode silencieux ── -->
+        <div class="divider" style="margin:16px 0 12px"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px">
+          <span style="font-size:.85rem;font-weight:600;color:#5a3015">Mode silencieux</span>
+          <label class="tgl"><input type="checkbox" id="silence-toggle" onchange="setSilenceMode(this.checked)"><span class="tgl-sl"></span></label>
+        </div>
+        <div style="font-size:.78rem;color:#888">Met en pause les insertions de bûches et limite les ventilateurs à 35 % pour un fonctionnement discret. Se désactive automatiquement après 3 h.</div>
+        <div id="silence-remaining" style="font-size:.8rem;font-weight:600;color:#c0392b;margin-top:6px;min-height:1.1em"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Settings ── -->
+  <div class="card">
+    <div class="settings-toggle" onclick="toggleSettings()">
+      <span style="font-weight:700;color:#8B4513">Paramètres</span>
+      <span class="arrow" id="settings-arrow">▼</span>
+    </div>
+    <div class="settings-body" id="settings-body">
+
+      <!-- [DISABLED] Alertes de maintenance — gérées dans l'app
+      <div>
+        <div class="settings-section">Alertes de maintenance</div>
+        <div class="gap-col">
+          <div class="alert-row">
+            <div class="alert-fields">
+              <input type="email" id="alert-email-1" placeholder="Adresse e-mail"/>
+              <select id="alert-op-1" onchange="onAlertOpChange(1)">
+                <option value="0">Pas de SMS</option>
+                <option value="1">Orange</option>
+                <option value="2">SFR</option>
+                <option value="3">Bouygues</option>
+                <option value="4">Free Mobile</option>
+              </select>
+              <div id="alert-phone-wrap-1" style="display:none;">
+                <input type="tel" id="alert-phone-1" placeholder="Téléphone (ex. 0612345678)" style="width:100%;box-sizing:border-box;"/>
+              </div>
+              <div id="alert-free-wrap-1" style="display:none;">
+                <input type="text"     id="alert-free-uid-1" placeholder="Identifiant abonné Free" style="width:100%;box-sizing:border-box;margin-bottom:4px;"/>
+                <input type="password" id="alert-free-key-1" placeholder="Clé API Free"            style="width:100%;box-sizing:border-box;"/>
+              </div>
+            </div>
+            <input type="checkbox" id="alert-en-1" checked/>
+          </div>
+          <div class="alert-row">
+            <div class="alert-fields">
+              <input type="email" id="alert-email-2" placeholder="Adresse e-mail"/>
+              <select id="alert-op-2" onchange="onAlertOpChange(2)">
+                <option value="0">Pas de SMS</option>
+                <option value="1">Orange</option>
+                <option value="2">SFR</option>
+                <option value="3">Bouygues</option>
+                <option value="4">Free Mobile</option>
+              </select>
+              <div id="alert-phone-wrap-2" style="display:none;">
+                <input type="tel" id="alert-phone-2" placeholder="Téléphone (ex. 0612345678)" style="width:100%;box-sizing:border-box;"/>
+              </div>
+              <div id="alert-free-wrap-2" style="display:none;">
+                <input type="text"     id="alert-free-uid-2" placeholder="Identifiant abonné Free" style="width:100%;box-sizing:border-box;margin-bottom:4px;"/>
+                <input type="password" id="alert-free-key-2" placeholder="Clé API Free"            style="width:100%;box-sizing:border-box;"/>
+              </div>
+            </div>
+            <input type="checkbox" id="alert-en-2"/>
+          </div>
+          <div class="alert-row">
+            <div class="alert-fields">
+              <input type="email" id="alert-email-3" placeholder="Adresse e-mail"/>
+              <select id="alert-op-3" onchange="onAlertOpChange(3)">
+                <option value="0">Pas de SMS</option>
+                <option value="1">Orange</option>
+                <option value="2">SFR</option>
+                <option value="3">Bouygues</option>
+                <option value="4">Free Mobile</option>
+              </select>
+              <div id="alert-phone-wrap-3" style="display:none;">
+                <input type="tel" id="alert-phone-3" placeholder="Téléphone (ex. 0612345678)" style="width:100%;box-sizing:border-box;"/>
+              </div>
+              <div id="alert-free-wrap-3" style="display:none;">
+                <input type="text"     id="alert-free-uid-3" placeholder="Identifiant abonné Free" style="width:100%;box-sizing:border-box;margin-bottom:4px;"/>
+                <input type="password" id="alert-free-key-3" placeholder="Clé API Free"            style="width:100%;box-sizing:border-box;"/>
+              </div>
+            </div>
+            <input type="checkbox" id="alert-en-3"/>
+          </div>
+          <button class="btn btn-brown btn-sm btn-full" onclick="saveAlerts()">Enregistrer les alertes</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      [END DISABLED] -->
+
+      <!-- Rappels de maintenance -->
+      <div>
+        <div class="settings-section">Rappels de maintenance</div>
+        <div class="gap-col">
+          <div class="maint-item">
+            <div class="maint-row">
+              <span class="maint-lbl">Remplacer le joint</span>
+              <span class="maint-val" id="joint-days">—</span>
+              <button class="btn btn-brown btn-sm" style="flex:none" onclick="changerJoint()">Changer le joint</button>
+              <button class="btn btn-tan btn-sm" style="flex:none" id="joint-edit-btn" onclick="maintEdit('joint')">Modifier</button>
+            </div>
+            <div class="maint-note" id="joint-note"></div>
+            <div class="maint-edit" id="joint-edit">
+              <label for="joint-date">Date de l'intervention</label>
+              <input type="date" id="joint-date">
+              <label for="joint-txt">Note (facultatif)</label>
+              <input type="text" id="joint-txt" maxlength="64" placeholder="Ex. : Ramoneur Dupont, certificat n°4471">
+              <div class="maint-hint">Enregistré dans la mémoire permanente du poêle.</div>
+              <div class="maint-edit-actions">
+                <button class="btn btn-cancel btn-sm" onclick="maintCancel('joint')">Annuler</button>
+                <button class="btn btn-brown btn-sm" onclick="maintSave('joint')">Enregistrer</button>
+              </div>
+            </div>
+          </div>
+          <div class="maint-item">
+            <div class="maint-row">
+              <span class="maint-lbl">Ramonage</span>
+              <span class="maint-val" id="ramon-days">—</span>
+              <button class="btn btn-tan btn-sm" style="flex:none" id="ramon-edit-btn" onclick="maintEdit('ramon')">Modifier</button>
+            </div>
+            <div class="maint-note" id="ramon-note"></div>
+            <div class="maint-edit" id="ramon-edit">
+              <label for="ramon-date">Date de l'intervention</label>
+              <input type="date" id="ramon-date">
+              <label for="ramon-txt">Note (facultatif)</label>
+              <input type="text" id="ramon-txt" maxlength="64" placeholder="Ex. : Ramoneur Dupont, certificat n°4471">
+              <div class="maint-hint">Enregistré dans la mémoire permanente du poêle.</div>
+              <div class="maint-edit-actions">
+                <button class="btn btn-cancel btn-sm" onclick="maintCancel('ramon')">Annuler</button>
+                <button class="btn btn-brown btn-sm" onclick="maintSave('ramon')">Enregistrer</button>
+              </div>
+            </div>
+          </div>
+          <div class="maint-item">
+            <div class="maint-row">
+              <span class="maint-lbl">Remplacer le joint de porte</span>
+              <span class="maint-val" id="seal-days">—</span>
+              <button class="btn btn-tan btn-sm" style="flex:none" id="seal-edit-btn" onclick="maintEdit('seal')">Modifier</button>
+            </div>
+            <div class="maint-note" id="seal-note"></div>
+            <div class="maint-edit" id="seal-edit">
+              <label for="seal-date">Date de l'intervention</label>
+              <input type="date" id="seal-date">
+              <label for="seal-txt">Note (facultatif)</label>
+              <input type="text" id="seal-txt" maxlength="64" placeholder="Ex. : Ramoneur Dupont, certificat n°4471">
+              <div class="maint-hint">Enregistré dans la mémoire permanente du poêle.</div>
+              <div class="maint-edit-actions">
+                <button class="btn btn-cancel btn-sm" onclick="maintCancel('seal')">Annuler</button>
+                <button class="btn btn-brown btn-sm" onclick="maintSave('seal')">Enregistrer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Notifications — désormais envoyées par le poêle lui-même via ntfy.
+           L'ancien système de notifications push de l'application (relais +
+           service worker) est désactivé : voir le bloc commenté plus bas dans
+           ce fichier et dans service-worker.js. -->
+      <div>
+        <div class="settings-section">Notifications</div>
+        <div class="gap-col">
+          <div style="font-size:.82rem;opacity:.75;margin-bottom:4px">Les alertes sont envoyées directement par le poêle : défaut, cassettes vides, feu éteint, rapport quotidien. Installez l'application gratuite <b>ntfy</b> et abonnez-vous au lien ci-dessous pour les recevoir.</div>
+          <div id="ntfy-link-box" style="font-size:.72rem;word-break:break-all;background:#f6efe7;border:1px solid #e0d2c2;border-radius:8px;padding:8px;color:#5a3015">En attente du poêle…</div>
+          <button class="btn btn-brown btn-sm btn-full" id="ntfy-copy-btn" onclick="copyNtfyLink()">📋 Copier le lien d'abonnement</button>
+          <button class="btn btn-sm btn-full" id="push-test-btn" style="background:#5a9e6f;color:#fff" onclick="testPushNotification()">🧪 Envoyer une notification test</button>
+          <div id="push-notif-status" style="font-size:.8rem;margin-top:2px;opacity:.7;text-align:center"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- [DISABLED] Paramètres de la maison — gérés dans l'app
+      <div>
+        <div class="settings-section">Paramètres de la maison</div>
+        <div class="gap-col">
+          <div class="param-row">
+            <label>Taille</label>
+            <input type="number" id="house-size" placeholder="Volume" min="0"/>
+            <label>m³</label>
+          </div>
+          <div>
+            <div style="font-size:.82rem;color:#777;margin-bottom:7px">Isolation</div>
+            <div class="ins-wrap">
+              <button class="ins-btn" id="ins-poor"    onclick="setInsulation('poor')">Mauvaise</button>
+              <button class="ins-btn" id="ins-average" onclick="setInsulation('average')">Moyenne</button>
+              <button class="ins-btn" id="ins-good"    onclick="setInsulation('good')">Bonne</button>
+            </div>
+          </div>
+          <button class="btn btn-brown btn-sm btn-full" onclick="saveHouseParams()">Enregistrer les paramètres</button>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+      [END DISABLED] -->
+
+      <!-- Compte -->
+      <div>
+        <div class="settings-section">Compte</div>
+        <div class="gap-col">
+          <input class="conn-input" id="pw-current" placeholder="Mot de passe actuel" type="password"/>
+          <input class="conn-input" id="pw-new"     placeholder="Nouveau mot de passe" type="password"/>
+          <input class="conn-input" id="pw-confirm" placeholder="Confirmer le nouveau mot de passe" type="password"/>
+          <button class="btn btn-brown btn-sm btn-full" id="pw-change-btn" onclick="changePassword()">Changer le mot de passe</button>
+          <div id="pw-change-status" style="font-size:.8rem;margin-top:2px;opacity:.7;text-align:center"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Redémarrage ESP -->
+      <div>
+        <button class="btn btn-red btn-full" onclick="resetESP()">↺ Redémarrer l'ESP32</button>
+        <p style="font-size:.72rem;color:#aaa;margin-top:8px;text-align:center">Attention : cela va redémarrer le contrôleur</p>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Bouton de maintenance (aide) -->
+      <div>
+        <div class="settings-section">Bouton de maintenance</div>
+        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Le bouton situé sur le poêle. Son action dépend de la durée d'appui et de l'état du poêle.</div>
+        <div class="mbtn-tbl">
+          <div class="mbtn-hd fault">Poêle en défaut</div>
+          <div class="mbtn-row"><b>Appui bref</b><span>Ouvre la porte du côté en défaut pendant 10 s, pour dégager la bûche coincée. Répétable : 2 bips courts = porte libérée, un bip long = refusé (moteur encore en mouvement, réessayez dans un instant).</span></div>
+          <div class="mbtn-row"><b>Appui 3 s</b><span>Valide le défaut : la trappe se referme et les ventilateurs repartent. À faire porte de chargement refermée, après avoir ouvert la porte au moins une fois et attendu les 10 s.</span></div>
+          <div class="mbtn-row"><b>Appui 30 s</b><span>Redémarre le poêle. Tous les réglages sont conservés.</span></div>
+          <div class="mbtn-hd ok">Poêle hors défaut</div>
+          <div class="mbtn-row"><b>Appui bref</b><span>Aucun effet — sauf juste après une récupération de compte lancée depuis le portail Wi-Fi (voir ci-dessous).</span></div>
+          <div class="mbtn-row"><b>Appui 3 s</b><span>Lance le refroidissement — ou l'annule s'il est déjà en cours.</span></div>
+          <div class="mbtn-row"><b>Appui 10 s</b><span>Redémarre le poêle. Tous les réglages sont conservés.</span></div>
+          <div class="mbtn-row"><b>Appui 20 s</b><span>Réinitialisation d'usine : efface les réglages, la programmation et le Wi-Fi, puis redémarre sur le point d'accès de configuration.</span></div>
+        </div>
+        <div class="mbtn-note">Un bip retentit à chaque palier atteint (1 bip au 1<sup>er</sup>, 2 au 2<sup>e</sup>, 3 au 3<sup>e</sup>) : relâchez au bon nombre de bips. Un bip long signifie que l'action a été refusée. Les paliers sont figés au début de l'appui : si le poêle est en défaut quand vous appuyez, ce sont les durées « en défaut » qui s'appliquent jusqu'au relâchement. En défaut, la réinitialisation d'usine est volontairement inaccessible : effacer le Wi-Fi rendrait le poêle injoignable au pire moment.<br><br><b>Récupération de compte</b> (mot de passe de l'application oublié) : connectez-vous au point d'accès « WoodMood-Setup », utilisez la carte de récupération, puis confirmez par un appui bref sur le bouton dans les 2 minutes. Le poêle réinitialise alors le mot de passe et redémarre.</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Déconnexion -->
+      <button class="btn btn-gray btn-full" onclick="disconnect()">Déconnecter</button>
+
+    </div>
+  </div>
+
+  <!-- ── Moniteur heap ── -->
+  <div id="heap-monitor" style="display:none">
+    <div class="heap-row">
+      <span class="heap-lbl">Heap</span>
+      <div class="heap-bar-wrap"><div class="heap-bar-fill" id="heap-bar"></div></div>
+      <span class="heap-val" id="heap-free-val">—</span>
+      <span class="heap-lbl">·  min</span>
+      <span class="heap-val" id="heap-min-val">—</span>
+    </div>
+  </div>
+
+  <!-- ── Footer ── -->
+  <div style="text-align:center;font-size:.72rem;color:rgba(255,255,255,.5);padding-bottom:8px">
+    WoodMood · <span id="footer-serial">—</span><span id="footer-ota"></span>
+  </div>
+
+</div>
+
+<!-- ── Toast ── -->
+<div id="toast"></div>
+
+<!-- ── Offline overlay ── -->
+<div id="offline-overlay">
+  <div class="offline-box">
+    <h2>Déconnecté</h2>
+    <p>Connexion au courtier perdue.<br>Reconnexion automatique…</p>
+    <button class="btn btn-brown btn-full" onclick="reconnect()">Réessayer</button>
+  </div>
+</div>
+
+<!-- ── Modale nombre de bûches ── -->
+<div id="log-modal" onclick="if(event.target===this)closeLogModal()">
+  <div class="log-modal-box">
+    <h3 id="log-modal-title">Nombre de bûches</h3>
+    <input class="log-modal-input" id="log-modal-input" type="number" inputmode="numeric"
+           min="0" max="6" placeholder="0–6"
+           oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,1)"
+           onkeydown="if(event.key==='Enter')logModalOk()"/>
+    <div class="log-modal-actions">
+      <button class="btn btn-tan"   onclick="logModalFull()">Cassette pleine</button>
+      <button class="btn btn-brown" onclick="logModalOk()">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modale conditions d'utilisation ── -->
+<div id="agree-modal" onclick="if(event.target===this)closeAgreement()">
+  <div class="agree-box">
+    <div class="agree-head">
+      <h3>Conditions d'utilisation</h3>
+      <a id="agree-external" href="#" target="_blank" rel="noopener">Ouvrir dans le navigateur ↗</a>
+    </div>
+    <!-- src posé à l'ouverture : l'adresse vient de version.json, et rien ne sert
+         de télécharger le texte à chaque démarrage de l'application. -->
+    <iframe class="agree-frame" id="agree-frame" title="Conditions d'utilisation"></iframe>
+    <div class="agree-foot">
+      <button class="btn btn-brown btn-full" onclick="closeAgreement()">J'ai lu les conditions</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const SWAP_SIDES = false;   // true = inverser gauche/droite par rapport au firmware
+
+// ============================================================
+// STATE
+// ============================================================
+// ── BUILD DE DÉMONSTRATION ───────────────────────────────────────────────────
+// Toutes les clés de stockage local sont suffixées « _demo ».
+//
+// Ce n'est pas cosmétique. localStorage est cloisonné par ORIGINE, pas par
+// chemin : cette démo (henri-dlgx.github.io/French-app-Demo) et la copie de
+// l'app de production servie par GitHub Pages
+// (henri-dlgx.github.io/WM_App-French) partagent donc exactement le même
+// stockage. Sans ce suffixe, se connecter à un poêle de test ici écraserait le
+// numéro de série, le mot de passe, la programmation et l'acceptation des CGU
+// enregistrés là-bas — et inversement.
+// (app.connectwoodmood.com est une autre origine et n'a jamais été concerné.)
+const LS_NS       = '_demo';
+const LS          = 'woodmood_cfg'            + LS_NS;
+const LS_ALERTS   = 'woodmood_alerts'         + LS_NS;
+const LS_HOUSE    = 'woodmood_house'          + LS_NS;
+const LS_SCHED    = 'woodmood_schedule'       + LS_NS;   // ancien format (tableau plat) — lu pour migration
+const LS_SCHED_V2 = 'woodmood_schedule_v2'    + LS_NS;   // {week:[12], weekend:[12]}
+const LS_SCHED_EN = 'woodmood_sched_enabled'  + LS_NS;
+const LS_PUSH     = 'woodmood_push_enabled'   + LS_NS;
+const LS_DAILY    = 'woodmood_daily_report'   + LS_NS;   // {enabled, time:'HH:MM', lastSent:'YYYY-MM-DD'}
+const LS_ROOM     = 'woodmood_room_temp'      + LS_NS;
+
+// Broker is the same for every device — only the serial + password differ per user.
+// Login is per-serial: username is always "<serial>-app", locked by EMQX ACL
+// to that stove's own WoodMood<serial>/# topic tree.
+const MQTT_BROKER = 'pb666061.ala.eu-central-1.emqxsl.com';
+const MQTT_PORT   = 8084;
+
+const RELAY_URL     = 'https://woodmood-relay.fly.dev';
+const RELAY_SECRET  = 'woodmood-jjqf9d-2026';
+const RELAY_HEADERS = {
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${RELAY_SECRET}`
+};
+
+// ── Conditions d'utilisation ───────────────────────────────────────
+// Le texte ET son adresse vivent dans le dépôt woodmood-legal (GitHub Pages).
+// L'application ne connaît en dur que l'adresse du fichier de version : les
+// conditions peuvent donc être réécrites, ou déplacées ailleurs, sans jamais
+// republier l'application. AGREEMENT_URL n'est qu'un filet de sécurité si
+// version.json est illisible ou ne porte pas de champ `url`.
+const LS_AGREE          = 'woodmood_agreement' + LS_NS;   // {version, url, acceptedAt}
+const AGREEMENT_META    = 'https://henri-dlgx.github.io/woodmood-legal/version.json';
+const AGREEMENT_URL     = 'https://henri-dlgx.github.io/woodmood-legal/conditions.html';
+const AGREEMENT_TIMEOUT = 4000;   // ms — au-delà, on considère le fichier injoignable
+
+let cfg              = JSON.parse(localStorage.getItem(LS) || '{}');
+// Acceptation mémorisée sur CE téléphone (pas par numéro de série) : un foyer
+// qui ressaisit son poêle ne relit pas les conditions pour autant.
+let agreeAccepted    = JSON.parse(localStorage.getItem(LS_AGREE) || 'null');
+let agreeLive        = null;              // version publiée ; null = pas encore lue
+let agreeUrl         = AGREEMENT_URL;     // écrasée par le champ `url` de version.json
+let agreeOpened      = false;             // conditions ouvertes pendant cette session
+let client           = null;
+let prefix           = '';
+let roomTemp         = 18;   // T1 par défaut (= consigne 275 °C côté poêle)
+let lastHbTime       = 0;
+let hbTimer          = null;
+let offlineTimer     = null;
+let settingsOpen     = false;
+let optionsOpen      = false;
+let systemState      = 'startup';   // startup | auto | cooldown | fault
+let faultSide            = null;    // 'l' | 'r'
+let faultReady           = false;   // le firmware signale que la panne peut être résolue
+let faultCountdownActive = false;   // décompte local de 10 s en cours
+let faultCountdownTimer  = null;
+let insulation       = null;
+let schedWeek        = Array(12).fill(20);  // programmation jours de semaine (lun–ven)
+let schedWeekend     = Array(12).fill(20);  // programmation week-end (sam–dim)
+let schedEditMode    = 'week';              // courbe en cours d'édition : 'week' | 'weekend'
+let schedEnabled     = false;
+let schedDrag        = null;
+let schedSlotTimer   = null;
+let lastSchedSlot    = -1;
+let lastDayType      = null;                // 'week' | 'weekend' — détecte le passage semaine↔week-end
+let fwSchedSlot      = -1;                  // créneau 2h actif rapporté par le poêle (sched_slot), -1 = inconnu
+let _pushSub         = null;
+let lastFaultMsg     = '';
+const _pushThrottle  = {};
+
+// Changement de mot de passe — voir PER_SERIAL_AUTH_GUIDE.md §12 (repo firmware).
+// pwChangeNewValue est la valeur en attente de confirmation par le relais
+// (status/app_pw_change) ; pwChangeTimeout couvre le cas où le relais est
+// injoignable ou pas encore configuré, pour ne pas laisser le bouton bloqué.
+let pwChangeNewValue = null;
+let pwChangeTimeout  = null;
+
+// Rapport quotidien des bûches — notification locale envoyée une fois par jour
+// à l'heure choisie, tant que l'app tourne et que le poêle est en marche.
+let dailyReport      = { enabled: false, time: '20:00', lastSent: '' };
+let dailyReportTimer = null;
+
+// Suivi d'état dérivé
+let stoveTemp          = null;   // dernière température du poêle (°C) via MQTT
+let setpointVal        = null;   // dernière consigne (°C) via MQTT
+let sysActive          = false;  // system_active depuis status/full
+let faultActive        = false;  // indicateur de panne active
+let inCooldown         = false;  // refroidissement entamé manuellement (optimiste)
+let remoteStateReceived= false;  // true dès que le firmware envoie status/system_state
+let logL               = 0;      // nombre de bûches à gauche
+let logR               = 0;      // nombre de bûches à droite
+let bothMagazinesEmptyNotified = false; // avoids re-firing the "both empty" push every second
+let bleRoomTemp        = null;   // température BLE (°C), null = indisponible
+let bleRoomTempOk      = false;  // true quand le capteur BLE a une lecture valide
+let lastKnownBleTemp   = null;   // dernière lecture BLE valide — affichée si capteur hors ligne
+
+// ── Verrou commande en attente — évite le rebond MQTT ──
+// Deux usages :
+//   lockField(f)        → verrou minuté simple : on ignore les échos pendant
+//                         PENDING_TTL ms (system_state, silence_mode).
+//   lockField(f, val)   → verrou « optimiste » : on affiche `val` tout de suite et
+//                         on ignore les échos JUSQU'À ce que le firmware confirme
+//                         cette valeur — puis on libère immédiatement (room_temp,
+//                         log_l, log_r). PENDING_TTL n'est plus qu'un filet de
+//                         sécurité si le poêle ne confirme jamais.
+const pendingCmds = {};
+const PENDING_TTL = 6000; // ms — filet de sécurité si le poêle ne confirme jamais
+function lockField(f, val) {
+  pendingCmds[f] = { val: (val === undefined ? null : String(val)), expire: Date.now() + PENDING_TTL };
+}
+function isLocked(f) {
+  const p = pendingCmds[f];
+  return !!(p && Date.now() < p.expire);
+}
+// Champs à valeur (room_temp, log_l, log_r) : faut-il ignorer CET écho ?
+//   • aucune commande en attente            → non : on accepte la vérité du firmware
+//   • l'écho == ce qu'on a envoyé           → CONFIRMÉ : on libère et on accepte
+//   • délai dépassé sans confirmation        → ABANDON : on libère, on laisse la vérité
+//                                              du firmware revenir et on prévient l'utilisateur
+//   • écho périmé, délai non dépassé         → oui : on garde la valeur optimiste affichée
+function ignoreEcho(f, incoming) {
+  const p = pendingCmds[f];
+  if (!p || p.val === null) return false;
+  if (String(incoming) === p.val) { delete pendingCmds[f]; return false; }   // confirmé
+  if (Date.now() >= p.expire) {                                              // abandon
+    delete pendingCmds[f];
+    showToast('Réglage non confirmé par le poêle — réessayez');
+    return false;
+  }
+  return true;   // écho périmé → on conserve l'affichage optimiste
+}
+
+// ============================================================
+// INIT
+// ============================================================
+window.addEventListener('load', () => {
+  loadSettings();
+  initSchedule();
+  // initDailyReport();  // désactivé — le rapport quotidien vient du poêle (ntfy)
+  // Restaure la dernière température souhaitée depuis localStorage
+  const savedRoom = parseInt(localStorage.getItem(LS_ROOM));
+  if (savedRoom >= 18 && savedRoom <= 23) roomTemp = savedRoom;
+  if (cfg.pass && cfg.serial) {
+    // Rattrape aussi un numéro de série enregistré en minuscules par une
+    // version précédente : fillForm() le réaffiche corrigé.
+    cfg.serial = normalizeSerial(cfg.serial);
+    cfg.user = cfg.serial + '-app';
+    fillForm();
+    // Conditions d'utilisation : on se connecte immédiatement sur la version
+    // déjà acceptée, sans attendre le réseau. Placer un aller-retour HTTP devant
+    // chaque démarrage retarderait l'affichage de l'état du poêle tous les jours
+    // pour un contrôle qui ne change qu'exceptionnellement. La vérification
+    // arrive quelques centaines de millisecondes plus tard et referme la porte
+    // si la version a bougé — voir applyAgreementGate().
+    if (agreeAccepted) {
+      document.getElementById('conn-card').style.display = 'none';
+      connect();
+    }
+  }
+  refreshAgreementUi();
+  fetchAgreementMeta().then(applyAgreementGate);
+  renderBars('left',  0);
+  renderBars('right', 0);
+  document.getElementById('room-val').textContent = tempToLabel(roomTemp);
+});
+
+function fillForm() {
+  document.getElementById('cfg-serial').value = cfg.serial || '';
+  document.getElementById('cfg-pass').value   = cfg.pass   || '';
+  refreshAgreementUi();
+}
+
+function toggleConnPanel() {
+  const card = document.getElementById('conn-card');
+  card.style.display = card.style.display === 'none' ? '' : 'none';
+  if (card.style.display !== 'none') fillForm();
+}
+
+// ============================================================
+// CONDITIONS D'UTILISATION
+// ============================================================
+// Trois états possibles au démarrage, et le troisième est le plus important :
+//   • version lue = version acceptée  → rien à faire
+//   • version lue ≠ version acceptée  → re-acceptation obligatoire
+//   • version ILLISIBLE (hors ligne, Pages en panne, JSON cassé)
+//        → un utilisateur déjà inscrit se connecte normalement sur sa dernière
+//          version acceptée. Une panne de réseau côté GitHub ne doit jamais
+//          empêcher quelqu'un de piloter son poêle : le coût d'un blocage à tort
+//          (un feu qu'on ne surveille plus) est sans commune mesure avec celui
+//          d'une acceptation retardée de quelques heures.
+
+// Ne lève jamais : un échec réseau doit devenir un « je ne sais pas » (null),
+// pas une exception qui casserait la suite du démarrage.
+async function fetchAgreementMeta() {
+  const ctl  = new AbortController();
+  const kill = setTimeout(() => ctl.abort(), AGREEMENT_TIMEOUT);
+  try {
+    // no-store + horodatage : le CDN de GitHub Pages garde volontiers une
+    // ancienne copie, et on veut la version réelle, pas celle du cache.
+    const r = await fetch(AGREEMENT_META + '?t=' + Date.now(),
+                          { cache: 'no-store', signal: ctl.signal });
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j || typeof j.version !== 'string' || !j.version) return null;   // JSON cassé
+    return j;
+  } catch (e) {
+    console.warn('[CGU] version.json injoignable :', e && e.message);
+    return null;
+  } finally {
+    clearTimeout(kill);
+  }
+}
+
+function applyAgreementGate(meta) {
+  if (meta) {
+    agreeLive = meta.version;
+    // On n'accepte qu'une adresse https explicite : ce champ pilote le `src`
+    // d'un cadre, il ne doit pas pouvoir devenir un javascript: ou un data:.
+    if (typeof meta.url === 'string' && /^https:\/\//.test(meta.url)) agreeUrl = meta.url;
+  }
+  if (agreeLive && agreeAccepted && agreeAccepted.version !== agreeLive) {
+    agreeAccepted = null;
+    localStorage.removeItem(LS_AGREE);
+    agreeOpened   = false;                       // il faut rouvrir le nouveau texte
+    document.getElementById('agree-changed').classList.add('show');
+    disconnect();                                // referme la porte (réaffiche le panneau)
+  }
+  refreshAgreementUi();
+}
+
+// La case ne s'active qu'après une ouverture réelle des conditions. C'est le
+// seul geste qu'on puisse honnêtement constater : le texte est servi par un
+// autre domaine, on ne peut pas savoir jusqu'où il a été fait défiler.
+async function openAgreement() {
+  if (!agreeLive) {                              // première lecture ratée → on retente
+    applyAgreementGate(await fetchAgreementMeta());
+    if (!agreeLive && !agreeAccepted) {
+      showToast('Conditions indisponibles — vérifiez votre connexion');
+      return;
+    }
+  }
+  const url = (agreeAccepted && agreeAccepted.url) || agreeUrl;
+  const f   = document.getElementById('agree-frame');
+  if (f.getAttribute('src') !== url) f.setAttribute('src', url);
+  document.getElementById('agree-external').href = url;
+  document.getElementById('agree-modal').classList.add('show');
+}
+
+function closeAgreement() {
+  document.getElementById('agree-modal').classList.remove('show');
+  agreeOpened = true;
+  refreshAgreementUi();
+}
+
+function refreshAgreementUi() {
+  const box  = document.getElementById('agree-box');
+  const txt  = document.getElementById('agree-text');
+  const link = document.getElementById('agree-open');
+  const btn  = document.getElementById('conn-btn');
+  if (!box || !btn) return;
+
+  const known = !!(agreeLive || agreeAccepted);   // sait-on quel texte faire lire ?
+
+  if (agreeAccepted) {
+    // Déjà accepté : rouvrir le panneau pour changer de numéro de série ne doit
+    // pas obliger à relire un texte inchangé.
+    box.disabled = false;
+    if (!agreeOpened) box.checked = true;
+    txt.textContent  = "J'ai lu et j'accepte les conditions d'utilisation";
+    link.textContent = "\ud83d\udcc4 Relire les conditions d'utilisation";
+  } else if (!known) {
+    box.disabled = true;
+    box.checked  = false;
+    txt.textContent  = 'Conditions momentanément indisponibles';
+    link.textContent = '\u21bb Réessayer de charger les conditions';
+  } else if (!agreeOpened) {
+    box.disabled = true;
+    box.checked  = false;
+    txt.textContent  = 'Ouvrez d\'abord les conditions ci-dessus';
+    link.textContent = "\ud83d\udcc4 Lire les conditions d'utilisation";
+  } else {
+    box.disabled = false;
+    txt.textContent  = "J'ai lu et j'accepte les conditions d'utilisation";
+    link.textContent = "\ud83d\udcc4 Relire les conditions d'utilisation";
+  }
+  btn.disabled = !box.checked;
+}
+
+// ============================================================
+// CONNECTION
+// ============================================================
+// Le numéro de série est recopié à la main depuis la carte livrée avec le poêle.
+// Côté EMQX, le nom d'utilisateur ET le filtre de topic sont sensibles à la
+// casse : « afnmu3 » donne l'utilisateur « afnmu3-app » et le préfixe
+// « WoodMoodafnmu3 », que le courtier refuse — sans aucun message disant
+// pourquoi. L'utilisateur voit seulement « hors ligne » et conclut que son mot
+// de passe est faux ou que le poêle est en panne.
+//
+// Ce n'est pas un cas d'école : les claviers iOS et Android mettent par défaut
+// une majuscule à la PREMIÈRE lettre seulement, donc taper la carte donne
+// naturellement « Afnmu3 ». On enlève aussi les espaces (un numéro de série
+// n'en contient jamais), mais rien d'autre : une saisie réellement fausse doit
+// continuer à échouer visiblement plutôt que d'être « corrigée » en silence.
+//
+// Sans risque pour les connexions existantes : tous les numéros de série émis
+// sont alphanumériques majuscules.
+function normalizeSerial(raw) {
+  return String(raw || '').replace(/\s+/g, '').toUpperCase();
+}
+
+function saveAndConnect() {
+  cfg.broker = MQTT_BROKER;
+  cfg.port   = MQTT_PORT;
+  cfg.serial = normalizeSerial(document.getElementById('cfg-serial').value);
+  cfg.user   = cfg.serial + '-app';
+  cfg.pass   = document.getElementById('cfg-pass').value.trim();
+  if (!cfg.pass || !cfg.serial) { alert('Veuillez remplir tous les champs'); return; }
+  // Le bouton est déjà désactivé tant que la case n'est pas cochée ; ce garde-fou
+  // couvre le cas où la fonction serait appelée autrement (clavier, console).
+  if (!document.getElementById('agree-box').checked) {
+    showToast("Veuillez lire et accepter les conditions d'utilisation");
+    return;
+  }
+  localStorage.setItem(LS, JSON.stringify(cfg));
+  agreeAccepted = {
+    version:    agreeLive || (agreeAccepted && agreeAccepted.version) || 'inconnue',
+    url:        agreeUrl,
+    acceptedAt: new Date().toISOString()
+  };
+  localStorage.setItem(LS_AGREE, JSON.stringify(agreeAccepted));
+  document.getElementById('agree-changed').classList.remove('show');
+  document.getElementById('conn-card').style.display = 'none';
+  connect();
+}
+
+function connect() {
+  prefix = 'WoodMood' + cfg.serial;
+  setDotState('connecting');
+
+  if (client) { try { client.end(true); } catch(e){} }
+
+  client = mqtt.connect(`wss://${MQTT_BROKER}:${MQTT_PORT}/mqtt`, {
+    username:        cfg.user,
+    password:        cfg.pass,
+    clientId:        'woodmood-web-' + Math.random().toString(16).substr(2,8),
+    keepalive:       60,
+    reconnectPeriod: 5000,
+    connectTimeout:  10000,
+    rejectUnauthorized: false
+  });
+
+  client.on('connect', () => {
+    setDotState('connected');   // orange — en attente du heartbeat
+    clearTimeout(offlineTimer);
+    offlineTimer = null;
+    document.getElementById('offline-overlay').classList.remove('show');
+    client.subscribe(prefix + '/status/#');
+    client.subscribe(prefix + '/schedule');
+    // NOTE : ni l'état activé/désactivé ni la courbe ne sont re-publiés ici. Le
+    // firmware persiste la courbe et _scheduleEnabled en NVS (survit aux
+    // redémarrages) et c'est la seule source de vérité, partagée entre tous les
+    // téléphones connectés via /schedule (retenu) et le champ sched_enabled de
+    // status/full (voir applyFull()). Re-publier l'état local de CETTE app à
+    // chaque reconnexion permettait à un second téléphone (état/courbe locale
+    // périmée ou par défaut) d'écraser silencieusement ce que l'autre venait de
+    // régler. saveSchedule() reste le seul point qui publie la courbe, en
+    // réponse à une action explicite de l'utilisateur.
+    // Appliquer le créneau de programmation actuel à la (re)connexion
+    lastSchedSlot = Math.floor(new Date().getHours() / 2);
+    lastDayType   = isWeekendDay() ? 'weekend' : 'week';
+    applyScheduleSlot();
+    // Surveiller les changements de créneau / de type de jour (toutes les minutes)
+    if (!schedSlotTimer) {
+      schedSlotTimer = setInterval(function() {
+        const slot = Math.floor(new Date().getHours() / 2);
+        const dt   = isWeekendDay() ? 'weekend' : 'week';
+        const dayChanged = dt !== lastDayType;
+        if (dayChanged) {
+          lastDayType = dt;
+          // Re-publier pour que le firmware (repli NTP) suive la courbe du nouveau type de jour
+          if (schedEnabled && client && client.connected)
+            client.publish(prefix + '/schedule', schedPayload(), { qos:1, retain:true });
+        }
+        if (slot !== lastSchedSlot || dayChanged) {
+          lastSchedSlot = slot;
+          applyScheduleSlot();
+        }
+      }, 60000);
+    }
+  });
+
+  client.on('message',   onMessage);
+  client.on('offline',   () => { setDotState('disconnected'); showOffline(); });
+  client.on('error',     (err) => {
+    // Surface the real reason (e.g. "Connection refused: Not authorized" for bad
+    // credentials) instead of silently showing "déconnecté".
+    const reason = (err && err.message) ? err.message : String(err);
+    console.error('[MQTT] connection error:', reason, err);
+    showToast('Échec MQTT : ' + reason);
+    setDotState('disconnected');
+  });
+  client.on('reconnect', () => { setDotState('connecting');   });
+}
+
+function disconnect() {
+  if (client) { try { client.end(true); } catch(e){} client = null; }
+  setDotState('disconnected');
+  document.getElementById('conn-card').style.display = '';
+  fillForm();
+}
+
+function reconnect() {
+  document.getElementById('offline-overlay').classList.remove('show');
+  connect();
+}
+
+function setDotState(s) {
+  const dot   = document.getElementById('status-dot');
+  const label = document.getElementById('status-label');
+  dot.className = 'status-dot';
+  if      (s === 'connecting') { dot.classList.add('connecting'); label.textContent = 'Connexion…';   }
+  else if (s === 'connected')  { dot.classList.add('connected');  label.textContent = 'Connecté';     }
+  else if (s === 'alive')      { dot.classList.add('alive');      label.textContent = 'Connecté';     }
+  else                         {                                  label.textContent = 'Déconnecté';   }
+}
+
+function showOffline() {
+  if (lastHbTime === 0 || offlineTimer) return;
+  offlineTimer = setTimeout(() => {
+    offlineTimer = null;
+    document.getElementById('offline-overlay').classList.add('show');
+  }, 5000);
+}
+
+// ============================================================
+// MQTT MESSAGES
+// ============================================================
+function onMessage(topic, payloadBuf) {
+  const payload = payloadBuf.toString();
+  const sub     = topic.replace(prefix + '/', '');
+
+  if (sub === 'schedule') {
+    try {
+      const data = JSON.parse(payload);
+      if (data && Array.isArray(data.week) && Array.isArray(data.weekend)) {
+        schedWeek    = sanitizeSched(data.week);
+        schedWeekend = sanitizeSched(data.weekend);
+      } else if (Array.isArray(data) && data.length === SCHED_SLOTS) {
+        // Ancien format (tableau plat) → appliqué aux deux courbes
+        schedWeek = sanitizeSched(data); schedWeekend = sanitizeSched(data);
+      } else return;
+      persistSched();
+      if (optionsOpen && !schedDrag) renderScheduleSVG();
+    } catch(e) {}
+    return;
+  }
+
+  if (sub === 'status/heartbeat') {
+    publish('cmd/heartbeat_ack', '1');
+    lastHbTime = Date.now();
+    setDotState('alive');
+    clearTimeout(hbTimer);
+    hbTimer = setTimeout(() => setDotState('connected'), 31000);
+    return;
+  }
+
+  if (sub === 'status/full')       { try { applyFull(JSON.parse(payload)); } catch(e){} return; }
+  if (sub === 'status/fault')      { setFault(payload === '1'); return; }
+  if (sub === 'status/fault_msg')  { setFaultMsg(payload);      return; }
+  if (sub === 'status/fault_side') { const _s = payload.toLowerCase(); faultSide = (_s === 'right' || _s === 'r') ? 'r' : 'l'; if (faultActive) renderFaultPhase(); return; }
+
+  if (sub === 'status/app_pw_change') {
+    clearTimeout(pwChangeTimeout);
+    const btn    = document.getElementById('pw-change-btn');
+    const status = document.getElementById('pw-change-status');
+    btn.disabled = false;
+    let ok = false;
+    try { ok = !!JSON.parse(payload).ok; } catch(e) {}
+    if (ok && pwChangeNewValue) {
+      cfg.pass = pwChangeNewValue;
+      localStorage.setItem(LS, JSON.stringify(cfg));
+      document.getElementById('cfg-pass').value = cfg.pass;
+      document.getElementById('pw-current').value = '';
+      document.getElementById('pw-new').value     = '';
+      document.getElementById('pw-confirm').value = '';
+      status.textContent = 'Mot de passe mis à jour ✓';
+      showToast('Mot de passe changé avec succès');
+    } else {
+      status.textContent = 'Échec — réessayez';
+      showToast('Le changement de mot de passe a échoué');
+    }
+    pwChangeNewValue = null;
+    return;
+  }
+
+  if (sub === 'status/temperature') {
+    stoveTemp = parseFloat(payload);
+    document.getElementById('stove-temp').textContent = payload + '°';
+    updateSystemState(); return;
+  }
+  if (sub === 'status/room_temp') {
+    const val = parseFloat(payload);
+    bleRoomTempOk = !isNaN(val) && val > -998;
+    bleRoomTemp   = bleRoomTempOk ? val : null;
+    updateBleRoomTemp(); return;
+  }
+  if (sub === 'status/ntfy_link') { setNtfyLink(payload); return; }
+  if (sub === 'status/log_level_l') {
+    if (ignoreEcho('log_l', parseInt(payload) || 0)) return;
+    const prevL = logL;
+    logL = parseInt(payload) || 0;
+    renderBars('left', logL);
+    document.getElementById('count-left').textContent = logL + ' bûches';
+    // Notifications désactivées — tout passe par ntfy (poêle). L'alerte
+    // « cassette gauche basse » est supprimée volontairement : un côté qui se
+    // vide en cours de flambée est normal et déclenchait une alerte quasi
+    // permanente. Seul « plus aucune bûche des deux côtés » alerte encore.
+    // if (logL === 1 && prevL !== 1) triggerPush('low-L', '🪵 WoodMood — Cassette gauche basse', 'Il reste seulement 1 bûche à gauche');
+    // checkBothMagazinesEmpty();
+    calcBurnTime(); return;
+  }
+  if (sub === 'status/log_level_r') {
+    if (ignoreEcho('log_r', parseInt(payload) || 0)) return;
+    const prevR = logR;
+    logR = parseInt(payload) || 0;
+    renderBars('right', logR);
+    document.getElementById('count-right').textContent = logR + ' bûches';
+    // Idem côté droit — voir le commentaire ci-dessus.
+    // if (logR === 1 && prevR !== 1) triggerPush('low-R', '🪵 WoodMood — Cassette droite basse', 'Il reste seulement 1 bûche à droite');
+    // checkBothMagazinesEmpty();
+    calcBurnTime(); return;
+  }
+  if (sub === 'status/system_state') {
+    remoteStateReceived = true;
+    if (!isLocked('system_state')) applySystemState(payload);
+    return;
+  }
+  // Dates d'entretien — publiées « retained » par le firmware sur
+  // status/maintenance (epochs Unix + notes), donc reçues dès la connexion.
+  if (sub === 'status/maintenance') {
+    try { applyMaintenance(JSON.parse(payload)); } catch(e) {}
+    return;
+  }
+
+  if (sub === 'status/heap') {
+    try {
+      const h = JSON.parse(payload);
+      if (h.free !== undefined) applyHeap(h.free, h.min_free, h.max_alloc);
+    } catch(e) {}
+    return;
+  }
+}
+
+// ============================================================
+// FULL STATUS JSON
+// ============================================================
+function applyFull(d) {
+  if (d.stove_temp !== undefined) {
+    stoveTemp = parseFloat(d.stove_temp);
+    document.getElementById('stove-temp').textContent = d.stove_temp + '°';
+  }
+  if (d.setpoint !== undefined) {
+    setpointVal = parseFloat(d.setpoint);
+    document.getElementById('setpoint-val').textContent = d.setpoint + '°';
+  }
+  if (d.room_temp !== undefined) {
+    const val = parseFloat(d.room_temp);
+    bleRoomTempOk = (d.room_temp_ok !== undefined) ? !!d.room_temp_ok : (!isNaN(val) && val > -998);
+    bleRoomTemp   = bleRoomTempOk ? val : null;
+    updateBleRoomTemp();
+  }
+  if (d.log_l !== undefined && !ignoreEcho('log_l', parseInt(d.log_l) || 0)) {
+    logL = parseInt(d.log_l) || 0;
+    renderBars('left', logL);
+    document.getElementById('count-left').textContent = logL + ' bûches';
+  }
+  if (d.log_r !== undefined && !ignoreEcho('log_r', parseInt(d.log_r) || 0)) {
+    logR = parseInt(d.log_r) || 0;
+    renderBars('right', logR);
+    document.getElementById('count-right').textContent = logR + ' bûches';
+  }
+  // Synchronise la température souhaitée depuis l'écho du firmware — garde tous les clients en phase.
+  // Ignoré pendant 4 s après qu'un utilisateur appuie sur +/- pour éviter le rebond.
+  if (d.room_setpoint !== undefined && !ignoreEcho('room_temp', parseInt(d.room_setpoint))) {
+    const r = parseInt(d.room_setpoint);
+    if (r >= 18 && r <= 23 && r !== roomTemp) {
+      roomTemp = r;
+      document.getElementById('room-val').textContent = tempToLabel(roomTemp);
+      localStorage.setItem(LS_ROOM, roomTemp);
+    }
+  }
+  // Le poêle dit AUSSI d'où vient le niveau affiché : "sched" (la courbe le
+  // pilote), "override" (réglage temporaire de l'utilisateur, jusqu'au prochain
+  // créneau de 2 h) ou "manual" (pas de programmation). Seul "sched" est grisé.
+  // Pendant les ~4 s d'attente de confirmation d'un appui +/-, on force la
+  // pleine teinte : le poêle rapporte encore "sched" le temps de traiter la
+  // commande, et l'alternance gris/blanc clignoterait.
+  if (d.room_src !== undefined) {
+    const rv = document.getElementById('room-val');
+    if (rv) rv.classList.toggle('sched-driven',
+                                d.room_src === 'sched' && !isLocked('room_temp'));
+  }
+  if (d.system_active !== undefined) sysActive = !!d.system_active;
+  if (d.fault !== undefined) setFault(d.fault, d.fault_side, d.fault_ready);
+  if (d.joint_active !== undefined) {
+    const _js = (d.joint_side || '').toLowerCase();
+    syncJointService(!!d.joint_active, (_js === 'right' || _js === 'r') ? 'r' : 'l');
+  }
+  if (d.system_state  !== undefined) { remoteStateReceived = true; if (!isLocked('system_state')) applySystemState(d.system_state); }
+  if (d.uptime !== undefined) {
+    const h = Math.floor(d.uptime/3600), m = Math.floor((d.uptime%3600)/60);
+    document.getElementById('footer-serial').textContent = 'up ' + h + 'h ' + m + 'm';
+  }
+  if (d.local_ip && d.local_ip !== '0.0.0.0') {
+    const el = document.getElementById('footer-ota');
+    if (el) el.innerHTML = '  ·  <a href="http://' + d.local_ip + '/update" target="_blank"'
+      + ' style="color:rgba(255,255,255,.5);text-decoration:none" title="Ouvrir le programme de mise à jour OTA">'
+      + d.local_ip + '/update</a>'
+      + ' <span style="opacity:.55">pwd: &lt;MQTT password&gt;</span>';
+  }
+  if (d.heap_free !== undefined) applyHeap(d.heap_free, d.heap_min || 0, d.heap_max_alloc || 0);
+  // Récupère l'état activé/désactivé persisté par le firmware pour que tous les
+  // téléphones connectés convergent vers lui, plutôt que chaque app ne fasse
+  // confiance qu'à son propre bouton local.
+  if (d.sched_enabled !== undefined && !isLocked('sched_enabled')) {
+    const en = !!d.sched_enabled;
+    if (en !== schedEnabled) {
+      schedEnabled = en;
+      localStorage.setItem(LS_SCHED_EN, en ? '1' : '0');
+      document.getElementById('sched-badge').classList.toggle('active', en);
+      const togEl = document.getElementById('tog-sched-enable');
+      if (togEl) togEl.checked = en;
+      updateSchedStatus();
+    }
+  }
+  // Suit le créneau réellement appliqué par le poêle (piloté NTP, source de vérité),
+  // pour que le résumé « Maintenant / Suivant » corresponde au poêle et non à
+  // l'horloge de ce téléphone.
+  if (d.sched_slot !== undefined) {
+    const s = parseInt(d.sched_slot);
+    if (s !== fwSchedSlot) { fwSchedSlot = s; updateSchedStatus(); }
+  }
+
+  applyTechState(d);
+  calcBurnTime();
+  updateSystemState();
+}
+
+// ============================================================
+// SYNCHRONISATION MODE SILENCIEUX
+// ============================================================
+function applyTechState(d) {
+  if (d.silence_mode !== undefined && !isLocked('silence_mode')) {
+    const on = !!d.silence_mode;
+    document.getElementById('silence-toggle').checked = on;
+    renderSilenceRemaining(on ? (d.silence_remaining_s || 0) : 0);
+  }
+}
+
+// Affiche le décompte « se désactive dans … » sous l'interrupteur (vide si off).
+function renderSilenceRemaining(sec) {
+  const el = document.getElementById('silence-remaining');
+  if (!el) return;
+  sec = Number(sec) || 0;
+  if (sec <= 0) { el.textContent = ''; return; }
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const t = h > 0 ? (h + ' h ' + String(m).padStart(2, '0') + ' min') : (m + ' min');
+  el.textContent = 'Se désactive automatiquement dans ' + t;
+}
+
+// ============================================================
+// TEMPÉRATURE AMBIANTE BLE
+// ============================================================
+function updateBleRoomTemp() {
+  const el  = document.getElementById('ble-room-temp');
+  const lbl = document.getElementById('ble-room-label');
+  if (!el) return;
+  if (bleRoomTempOk && bleRoomTemp !== null) {
+    lastKnownBleTemp = bleRoomTemp;
+    el.textContent      = Math.round(bleRoomTemp) + '°';
+    el.style.fontStyle  = 'normal';
+    el.style.opacity    = '1';
+    lbl.textContent     = 'Température actuelle';
+    lbl.style.fontStyle = 'normal';
+  } else if (lastKnownBleTemp !== null) {
+    el.textContent      = Math.round(lastKnownBleTemp) + '°';
+    el.style.fontStyle  = 'italic';
+    el.style.opacity    = '0.65';
+    lbl.textContent     = 'Dernière mesure';
+    lbl.style.fontStyle = 'italic';
+  } else {
+    el.textContent      = '—°';
+    el.style.fontStyle  = 'normal';
+    el.style.opacity    = '0.5';
+    lbl.textContent     = 'Pièce (sans capteur)';
+    lbl.style.fontStyle = 'normal';
+  }
+}
+
+// ============================================================
+// ÉTAT DU SYSTÈME
+// ============================================================
+
+// Dérive l'état depuis les données en direct — utilisé en fallback si le firmware
+// n'a pas encore envoyé status/system_state.
+function updateSystemState() {
+  // Dès que le firmware envoie son propre état, on lui fait confiance.
+  if (remoteStateReceived) return;
+
+  if (faultActive)  { applySystemState('fault');    return; }
+  if (inCooldown)   { applySystemState('cooldown'); return; }
+
+  // Démarrage jusqu'à ce que le poêle atteigne 85 % de la consigne
+  if (stoveTemp !== null && setpointVal !== null && setpointVal > 0) {
+    if (stoveTemp >= setpointVal * 0.85 && sysActive) {
+      applySystemState('auto');
+    } else {
+      applySystemState('startup');
+    }
+  } else {
+    applySystemState('startup');
+  }
+}
+
+// Affiche l'état du système — accepte les chaînes du firmware et les chaînes locales.
+function applySystemState(state) {
+  systemState = state;
+  // Réinitialise le flag refroidissement quand le système revient en veille/démarrage/auto
+  if (state === 'standby' || state === 'startup' || state === 'auto') {
+    if (state !== 'cooldown') inCooldown = false;
+  }
+  const btn    = document.getElementById('sys-btn');
+  const labels = {
+    startup:       'Démarrage',
+    auto:          'Automatique',
+    cooldown:      'Refroidissement',
+    standby:       'Éteint — Appuyer pour démarrer',
+    fault:         'Défaut détecté',
+    shutting_down: 'Arrêt en cours',
+    active:        'Automatique',  // fallback legacy
+  };
+  btn.textContent = labels[state] || state;
+  // Correspondance entre les états du firmware et les classes CSS
+  const cssClass = state === 'active' ? 'auto'
+                 : state === 'shutting_down' ? 'cooldown'
+                 : (state || 'startup');
+  btn.className = 'sys-btn ' + cssClass;
+}
+
+function sysButtonClick() {
+  const btn      = document.getElementById('sys-btn');
+  const btnState = systemState || [...btn.classList].find(c => c !== 'sys-btn') || 'startup';
+
+  if (btnState === 'startup') {
+    const hot = stoveTemp !== null && stoveTemp > 150;
+    const msg = hot
+      ? 'Le poêle est chaud (' + Math.round(stoveTemp) + '°). Passer en refroidissement ?'
+      : 'Le poêle est froid. Éteindre le système ?';
+    if (!confirm(msg)) return;
+    inCooldown = true;
+    lockField('system_state');
+    publish('cmd/cooldown', '1');
+    applySystemState(hot ? 'cooldown' : 'standby');
+  } else if (btnState === 'auto' || btnState === 'active') {
+    if (!confirm('Passer en mode refroidissement ?')) return;
+    inCooldown = true;
+    lockField('system_state');
+    publish('cmd/cooldown', '1');
+    applySystemState('cooldown');
+  } else if (btnState === 'cooldown') {
+    if (!confirm('Annuler le refroidissement et revenir en mode automatique ?')) return;
+    inCooldown = false;
+    lockField('system_state');
+    publish('cmd/cooldown', '0');
+    applySystemState('auto');
+  } else if (btnState === 'standby') {
+    lockField('system_state');
+    publish('cmd/start', '1');
+    applySystemState('startup');
+  }
+}
+
+// ============================================================
+// DÉFAUT
+// ============================================================
+function setFault(active, side, ready) {
+  const wasActive = faultActive;
+  faultActive = !!(active || active === '1' || active === true);
+  if (side !== undefined && side !== null) {
+    // Le firmware envoie "Right"/"Left" (mots entiers) — normaliser en 'r'/'l'
+    const s = String(side).toLowerCase();
+    faultSide = (s === 'right' || s === 'r') ? 'r' : 'l';
+  }
+  if (ready) faultReady = true;  // le firmware peut seulement ACTIVER faultReady, jamais le désactiver en cours de panne
+  const banner = document.getElementById('fault-banner');
+  if (faultActive) {
+    banner.classList.add('show');
+    if (!wasActive) {
+      // Notification désactivée — le poêle envoie lui-même l'alerte de défaut
+      // par ntfy, avec un texte en clair (« Bûche bloquée côté … »). La
+      // bannière rouge dans l'app, elle, reste bien active juste au-dessus.
+      // triggerPush('fault', '⚠️ WoodMood — Défaut détecté', lastFaultMsg || 'Le poêle nécessite votre attention');
+      // Nouvelle panne — réinitialiser à la phase 1
+      clearFaultCountdown();
+      faultReady = false;
+    }
+    renderFaultPhase();
+  } else {
+    banner.classList.remove('show');
+    clearFaultCountdown();
+    faultReady = false;
+    const el = document.getElementById('fault-msg-text');
+    if (el) el.textContent = 'Bûche coincée dans la trappe — suivez les étapes ci-dessous';
+  }
+  updateSystemState();
+}
+
+function renderFaultPhase() {
+  const sideLabel = (faultSide === 'r') ? 'Droite' : 'Gauche';
+  // Mise à jour du badge de côté et de tous les spans .fault-side-name
+  const badge = document.getElementById('fault-side-badge');
+  if (badge) badge.textContent = sideLabel + ' — Côté';
+  document.querySelectorAll('.fault-side-name').forEach(function(el) {
+    el.textContent = sideLabel;
+  });
+  const p1 = document.getElementById('fault-phase-1');
+  const p2 = document.getElementById('fault-phase-2');
+  const p3 = document.getElementById('fault-phase-3');
+  if (faultReady) {
+    // Phase 3 : firmware confirmé prêt à résoudre
+    clearFaultCountdown();
+    p1.style.display = 'none';
+    p2.style.display = 'none';
+    p3.style.display = '';
+  } else if (faultCountdownActive) {
+    // Phase 2 : décompte local en cours
+    p1.style.display = 'none';
+    p2.style.display = '';
+    p3.style.display = 'none';
+  } else {
+    // Phase 1 : en attente que l'utilisateur déverrouille la porte
+    p1.style.display = '';
+    p2.style.display = 'none';
+    p3.style.display = 'none';
+  }
+}
+
+function faultUnlockDoor() {
+  const side = faultSide || 'l';
+  publish('cmd/door_' + side, '1');
+  showToast('Déverrouillage porte ' + (side === 'r' ? 'droite' : 'gauche') + '…');
+  // Démarrer le décompte local de 10 s (passe à la phase 3 quand terminé)
+  clearFaultCountdown();
+  faultCountdownActive = true;
+  let secs = 10;
+  document.getElementById('fault-countdown').textContent = secs;
+  renderFaultPhase();
+  faultCountdownTimer = setInterval(function() {
+    secs--;
+    document.getElementById('fault-countdown').textContent = secs;
+    if (secs <= 0) {
+      clearFaultCountdown();
+      faultReady = true;
+      renderFaultPhase();
+    }
+  }, 1000);
+}
+
+function clearFaultCountdown() {
+  clearInterval(faultCountdownTimer);
+  faultCountdownTimer  = null;
+  faultCountdownActive = false;
+}
+
+function resolveFault() {
+  publish('cmd/resolve_fault', '1');
+}
+
+// Le firmware envoie des messages de défaut codés en dur en anglais (voir
+// SafetyManager::enterFaultMode / AutoSequenceManager.cpp côté HenriLib).
+// On les traduit ici plutôt que côté firmware pour ne pas nécessiter un
+// reflash — repli sur le texte brut si un message inconnu apparaît.
+function translateFaultMsg(msg) {
+  if (!msg) return msg;
+  let m;
+
+  const exact = {
+    'Fan 1 not spinning - check fan wiring': "Ventilateur 1 à l'arrêt — vérifiez le câblage du ventilateur",
+    'Fan 2 not spinning - check fan wiring': "Ventilateur 2 à l'arrêt — vérifiez le câblage du ventilateur",
+    'Unexpected recovery extend': 'Extension de récupération inattendue',
+    'Door opened during recovery extend': "Porte ouverte pendant l'extension de récupération",
+    'Door opened during unexpected state': 'Porte ouverte dans un état inattendu',
+    'Unexpected recovery state': 'État de récupération inattendu'
+  };
+  if (exact[msg] !== undefined) return exact[msg];
+
+  const stallLabels = {
+    'FORWARD_1':            'avance 1',
+    'RETRY_1_MOTOR_BACK':   'retour, tentative 1',
+    'FORWARD_2':            'avance 2',
+    'AUTO_RETURN_HOME':     'retour au repos'
+  };
+  m = msg.match(/^Motor stall in (\w+) — no movement after (\d+)s \(limit (\d+)s\)$/);
+  if (m) {
+    const label = stallLabels[m[1]] || m[1];
+    return `Moteur bloqué (${label}) — aucun mouvement après ${m[2]}s (limite ${m[3]}s)`;
+  }
+
+  m = msg.match(/^Trapdoor failed to close during fault resolution — (RIGHT|LEFT) side not seated\. Clear obstruction and retry\.$/);
+  if (m) {
+    const side = m[1] === 'RIGHT' ? 'droit' : 'gauche';
+    return `La trappe ne s'est pas refermée après résolution du défaut — côté ${side} mal enclenché. Dégagez l'obstruction et réessayez.`;
+  }
+
+  m = msg.match(/^Joint service: motor stall homing to start — no home switch after (\d+)s$/);
+  if (m) return `Entretien du joint : moteur bloqué au retour au point zéro — contact home non détecté après ${m[1]}s`;
+
+  m = msg.match(/^Fast blockage after 2 retries\. Detected in (\d+)ms\. Delta from baseline exceeded threshold\.$/);
+  if (m) return `Blocage rapide après 2 tentatives. Détecté en ${m[1]}ms. L'écart par rapport à la référence dépasse le seuil.`;
+
+  return msg;
+}
+
+function setFaultMsg(msg) {
+  if (!msg) return;
+  lastFaultMsg = translateFaultMsg(msg);
+  const el = document.getElementById('fault-msg-text');
+  if (el) el.textContent = lastFaultMsg;
+}
+
+// ============================================================
+// BARRES DE CASSETTES
+// ============================================================
+function renderBars(side, count) {
+  const MAX = 6;
+  const el  = document.getElementById('bars-' + side);
+  el.innerHTML = '';
+  for (let i = 0; i < MAX; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'bar' + (i >= count ? ' empty' : '');
+    el.appendChild(bar);
+  }
+}
+
+// ============================================================
+// COMMANDES
+// ============================================================
+function publish(subtopic, payload) {
+  if (!client || !client.connected) { alert('Non connecté au courtier'); return; }
+  client.publish(prefix + '/' + subtopic, String(payload), { qos:1 });
+}
+
+function mapSide(s) { return SWAP_SIDES ? (s === 'l' ? 'r' : 'l') : s; }
+
+function adjustRoom(delta) {
+  roomTemp = Math.min(23, Math.max(18, (isNaN(roomTemp) ? 18 : roomTemp) + delta));
+  document.getElementById('room-val').textContent = tempToLabel(roomTemp);
+  // Le niveau redevient « à moi » tout de suite ; si la programmation est
+  // active le poêle en fera un réglage temporaire jusqu'au prochain créneau.
+  document.getElementById('room-val').classList.remove('sched-driven');
+  localStorage.setItem(LS_ROOM, roomTemp);
+  lockField('room_temp', roomTemp); // garde l'affichage jusqu'à confirmation du firmware
+  publish('cmd/room_temp', roomTemp);
+}
+
+// Publie cmd/set_app_password sur la connexion MQTT déjà authentifiée. Côté
+// relais, c'est l'ACL EMQX (être connecté en tant que <serial>-app) qui fait
+// autorité — voir PER_SERIAL_AUTH_GUIDE.md §12 (repo firmware). Le mot de passe
+// actuel demandé ici est une vérification locale contre cfg.pass : elle protège
+// contre un changement depuis un téléphone déjà connecté laissé sans
+// surveillance, mais ce n'est pas une barrière serveur.
+function changePassword() {
+  const btn    = document.getElementById('pw-change-btn');
+  const status = document.getElementById('pw-change-status');
+  const cur = document.getElementById('pw-current').value;
+  const pw1 = document.getElementById('pw-new').value;
+  const pw2 = document.getElementById('pw-confirm').value;
+
+  if (cur !== cfg.pass) { showToast('Le mot de passe actuel est incorrect'); return; }
+  if (pw1.length < 8)   { showToast('Le mot de passe doit contenir au moins 8 caractères'); return; }
+  if (pw1 !== pw2)      { showToast('Les mots de passe ne correspondent pas'); return; }
+  if (pw1 === cur)      { showToast('Le nouveau mot de passe doit être différent de l\'actuel'); return; }
+  if (!client || !client.connected) { showToast('Non connecté au courtier'); return; }
+
+  pwChangeNewValue = pw1;
+  btn.disabled = true;
+  status.textContent = 'Envoi de la demande…';
+  publish('cmd/set_app_password', pw1);
+
+  clearTimeout(pwChangeTimeout);
+  pwChangeTimeout = setTimeout(() => {
+    btn.disabled = false;
+    status.textContent = 'Aucune confirmation reçue — réessayez plus tard';
+    pwChangeNewValue = null;
+  }, 10000);
+}
+
+function unlockDoor(side) {
+  if (!confirm('Déverrouiller la porte ' + (side==='l'?'GAUCHE':'DROITE') + ' ?')) return;
+  publish('cmd/door_' + mapSide(side), '1');
+}
+
+let logModalSide = 'l';
+
+// "Mettre à jour" → open the number pop-up for this cassette.
+function updateLogCount(side) {
+  logModalSide = side;
+  document.getElementById('log-modal-title').textContent =
+    'Nombre de bûches — cassette ' + (side === 'l' ? 'gauche' : 'droite');
+  const input = document.getElementById('log-modal-input');
+  input.value = '';
+  document.getElementById('log-modal').classList.add('show');
+  setTimeout(() => input.focus(), 50);
+}
+
+// Left button — "Cassette pleine" → full (6), no typing.
+function logModalFull() {
+  applyLogCount(logModalSide, 6);
+  closeLogModal();
+}
+
+// Right button — "OK" → apply the typed number (ignore if empty).
+function logModalOk() {
+  const raw = document.getElementById('log-modal-input').value.trim();
+  if (raw !== '') applyLogCount(logModalSide, parseInt(raw, 10));
+  closeLogModal();
+}
+
+function closeLogModal() {
+  document.getElementById('log-modal').classList.remove('show');
+}
+
+function applyLogCount(side, n) {
+  n = Math.min(6, Math.max(0, n || 0));
+  if (side === 'l') logL = n; else logR = n;
+  lockField(side === 'l' ? 'log_l' : 'log_r', n); // garde le compte affiché jusqu'à confirmation
+  publish('cmd/log_level_' + mapSide(side), n);
+  renderBars(side === 'l' ? 'left' : 'right', n);
+  document.getElementById(side === 'l' ? 'count-left' : 'count-right').textContent = n + ' bûches';
+  calcBurnTime();
+}
+
+// ============================================================
+// TEMPS DE COMBUSTION — 40 min par bûche
+// ============================================================
+function calcBurnTime() {
+  const total    = logL + logR;
+  const el       = document.getElementById('burn-time-val');
+  const unitEl   = document.getElementById('burn-time-unit');
+  if (total === 0) { el.textContent = '—'; unitEl.textContent = ''; return; }
+  const totalMins = total * 40;
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  el.textContent   = h > 0 ? (m > 0 ? h + 'h ' + m + 'm' : h + 'h') : m + 'm';
+  unitEl.textContent = 'estimé';
+}
+
+// ============================================================
+// MODE SILENCIEUX
+// ============================================================
+function setSilenceMode(on) {
+  lockField('silence_mode');
+  publish('cmd/silence', on ? '1' : '0');
+  renderSilenceRemaining(on ? 3 * 3600 : 0);   // décompte optimiste jusqu'à l'écho du poêle
+  showToast(on ? 'Mode silencieux activé — insertions en pause, ventilateurs à 35 %' : 'Mode silencieux désactivé');
+}
+
+// ============================================================
+// REDÉMARRAGE ESP
+// ============================================================
+function resetESP() {
+  if (!confirm('Redémarrer le contrôleur ESP32 ?')) return;
+  publish('cmd/reset', '1');
+  showToast('Redémarrage ESP32…');
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// ============================================================
+// MONITEUR HEAP
+// ============================================================
+function applyHeap(freeB, minFreeB, maxAllocB) {
+  const freeKB    = (freeB    / 1024).toFixed(1);
+  const minFreeKB = (minFreeB / 1024).toFixed(1);
+
+  document.getElementById('heap-free-val').textContent = freeKB    + ' KB';
+  document.getElementById('heap-min-val').textContent  = minFreeKB + ' KB';
+
+  // Barre : SRAM interne ESP32-S3 utilisable ~330 KB (borne supérieure approximative)
+  const pct = Math.min(100, Math.round(freeB / 337920 * 100));
+  const bar = document.getElementById('heap-bar');
+  bar.style.width = pct + '%';
+
+  // Couleur : rouge < 20 Ko | orange < 50 Ko | vert ≥ 50 Ko
+  const colour = minFreeB < 20000 ? '#e74c3c' : minFreeB < 50000 ? '#f39c12' : '#2ecc71';
+  bar.style.background = colour;
+  document.getElementById('heap-min-val').style.color =
+    minFreeB < 20000 ? '#e74c3c' : minFreeB < 50000 ? '#f39c12' : 'rgba(255,255,255,.75)';
+}
+
+// ============================================================
+// PARAMÈTRES — ALERTES
+// ============================================================
+function onAlertOpChange(i) {
+  const sel = document.getElementById('alert-op-' + i);
+  if (!sel) return;   // section « Alertes » désactivée — éléments absents du DOM
+  const op = parseInt(sel.value);
+  document.getElementById('alert-phone-wrap-' + i).style.display = (op > 0 && op < 4) ? 'block' : 'none';
+  document.getElementById('alert-free-wrap-'  + i).style.display = (op === 4)          ? 'block' : 'none';
+}
+
+function loadSettings() {
+  // Les sections « Alertes » et « Paramètres de la maison » sont désactivées (commentées
+  // dans le HTML). On saute leur restauration si les éléments sont absents, sinon
+  // getElementById(...).value lèverait une erreur et interromprait l'init — ce qui empêchait
+  // la restauration automatique du login (numéro de série + mot de passe).
+  if (document.getElementById('alert-op-1')) {
+    const alerts = JSON.parse(localStorage.getItem(LS_ALERTS) || '{}');
+    for (let i = 1; i <= 3; i++) {
+      if (alerts['email'+i]   !== undefined) document.getElementById('alert-email-'+i).value    = alerts['email'+i];
+      if (alerts['op'+i]      !== undefined) document.getElementById('alert-op-'+i).value       = alerts['op'+i];
+      if (alerts['phone'+i]   !== undefined) document.getElementById('alert-phone-'+i).value    = alerts['phone'+i];
+      if (alerts['freeUid'+i] !== undefined) document.getElementById('alert-free-uid-'+i).value = alerts['freeUid'+i];
+      if (alerts['freeKey'+i] !== undefined) document.getElementById('alert-free-key-'+i).value = alerts['freeKey'+i];
+      if (alerts['en'+i]      !== undefined) document.getElementById('alert-en-'+i).checked      = alerts['en'+i];
+      onAlertOpChange(i);
+    }
+  }
+  if (document.getElementById('house-size')) {
+    const house = JSON.parse(localStorage.getItem(LS_HOUSE) || '{}');
+    if (house.size)       document.getElementById('house-size').value = house.size;
+    if (house.insulation) setInsulation(house.insulation, false);
+  }
+}
+
+function saveAlerts() {
+  const alerts = {};
+  let anyEnabled = false;
+  for (let i = 1; i <= 3; i++) {
+    const op = parseInt(document.getElementById('alert-op-'+i).value);
+    alerts['email'+i]   = document.getElementById('alert-email-'+i).value.trim();
+    alerts['op'+i]      = op;
+    alerts['phone'+i]   = (op > 0 && op < 4) ? document.getElementById('alert-phone-'+i).value.trim() : '';
+    alerts['freeUid'+i] = (op === 4)          ? document.getElementById('alert-free-uid-'+i).value.trim() : '';
+    alerts['freeKey'+i] = (op === 4)          ? document.getElementById('alert-free-key-'+i).value.trim() : '';
+    alerts['en'+i]      = document.getElementById('alert-en-'+i).checked;
+    if (alerts['en'+i]) anyEnabled = true;
+  }
+  if (!anyEnabled) { alert('Au moins une alerte doit être activée.'); return; }
+  localStorage.setItem(LS_ALERTS, JSON.stringify(alerts));
+  publish('cmd/alert_cfg', JSON.stringify(alerts));
+  alert('Alertes enregistrées.');
+}
+
+// ============================================================
+// PARAMÈTRES — MAINTENANCE
+// ============================================================
+// Dates de dernier entretien (ramonage, joints). Le firmware les conserve en
+// mémoire NVS — elles survivent aux coupures de courant et aux mises à jour —
+// et les republie « retained » sur status/maintenance, donc une app qui vient
+// de se lancer les reçoit sans rien demander.
+//
+// L'utilisateur peut saisir une date PASSÉE : un ramonage se déclare souvent
+// plusieurs semaines après coup. La commande est cmd/maint_done avec la charge
+// utile « item:epoch:note » (voir MQTTConfig.h côté firmware).
+
+// clé UI  →  { firmware: nom d'élément attendu par le firmware,
+//              json: clé de l'epoch dans status/maintenance }
+const MAINT_ITEMS = {
+  joint: { firmware: 'joint',    json: 'replace_joint' },
+  ramon: { firmware: 'ramonage', json: 'ramonage'      },
+  seal:  { firmware: 'seal',     json: 'door_seal'     }
+};
+
+// Dernier état reçu du poêle, par clé UI : { epoch, note }. Sert à pré-remplir
+// le formulaire d'édition et à ne pas perdre la note quand on ne change que la date.
+let maintState = { joint:{epoch:0,note:''}, ramon:{epoch:0,note:''}, seal:{epoch:0,note:''} };
+
+// epoch (s) → « jj/mm/aaaa » pour l'input type=date (format ISO exigé : aaaa-mm-jj)
+function epochToInputDate(epoch) {
+  const d = new Date(epoch * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+// « aaaa-mm-jj » → epoch (s). On vise MIDI heure locale, pas minuit : minuit UTC
+// dans un fuseau à l'est décale la date d'un jour à l'affichage.
+function inputDateToEpoch(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || '');
+  if (!m) return 0;
+  return Math.floor(new Date(+m[1], +m[2] - 1, +m[3], 12, 0, 0).getTime() / 1000);
+}
+
+function daysSince(epoch) {
+  return Math.max(0, Math.floor((Date.now() / 1000 - epoch) / 86400));
+}
+
+// Applique le JSON status/maintenance à l'écran Paramètres.
+function applyMaintenance(m) {
+  for (const key in MAINT_ITEMS) {
+    const cfg   = MAINT_ITEMS[key];
+    const epoch = Number(m[cfg.json]) || 0;
+    const note  = (m[cfg.json + '_note'] || '') + '';
+    maintState[key] = { epoch: epoch, note: note };
+
+    const valEl  = document.getElementById(key + '-days');
+    const noteEl = document.getElementById(key + '-note');
+    if (valEl) {
+      if (!epoch) {
+        valEl.textContent = 'jamais enregistré';
+      } else {
+        const n = daysSince(epoch);
+        const when = n === 0 ? "aujourd'hui" : (n === 1 ? 'hier' : 'il y a ' + n + ' jours');
+        valEl.textContent = when + ' (' + new Date(epoch * 1000).toLocaleDateString('fr-FR') + ')';
+      }
+    }
+    if (noteEl) noteEl.textContent = note;
+
+    // Ne pas écraser ce que l'utilisateur est en train de taper : le poêle peut
+    // republier status/maintenance (reconnexion, autre téléphone) pendant la saisie.
+    const editEl = document.getElementById(key + '-edit');
+    if (editEl && !editEl.classList.contains('show')) fillMaintForm(key);
+  }
+}
+
+function fillMaintForm(key) {
+  const st   = maintState[key];
+  const dEl  = document.getElementById(key + '-date');
+  const tEl  = document.getElementById(key + '-txt');
+  if (dEl) {
+    dEl.max   = epochToInputDate(Math.floor(Date.now() / 1000));  // pas de date future
+    dEl.value = st.epoch ? epochToInputDate(st.epoch) : dEl.max;  // par défaut : aujourd'hui
+  }
+  if (tEl) tEl.value = st.note;
+}
+
+function maintEdit(key) {
+  const editEl = document.getElementById(key + '-edit');
+  const btnEl  = document.getElementById(key + '-edit-btn');
+  if (!editEl) return;
+  const opening = !editEl.classList.contains('show');
+  if (opening) fillMaintForm(key);
+  editEl.classList.toggle('show', opening);
+  if (btnEl) btnEl.textContent = opening ? 'Fermer' : 'Modifier';
+}
+
+function maintCancel(key) {
+  const editEl = document.getElementById(key + '-edit');
+  const btnEl  = document.getElementById(key + '-edit-btn');
+  if (editEl) editEl.classList.remove('show');
+  if (btnEl)  btnEl.textContent = 'Modifier';
+  fillMaintForm(key);                       // rejeter les saisies non enregistrées
+}
+
+function maintSave(key) {
+  const cfg = MAINT_ITEMS[key];
+  if (!cfg) return;
+  const epoch = inputDateToEpoch(document.getElementById(key + '-date').value);
+  if (!epoch) { alert('Choisissez une date valide.'); return; }
+  if (epoch > Date.now() / 1000 + 86400) {
+    alert("La date ne peut pas être dans le futur."); return;
+  }
+
+  // Les deux-points séparent item/date/note côté firmware : la note est le reste
+  // de la charge utile, mais on retire les retours à la ligne qui casseraient
+  // le JSON republié.
+  const note = document.getElementById(key + '-txt').value.replace(/[\r\n]+/g, ' ').trim().slice(0, 64);
+  publish('cmd/maint_done', cfg.firmware + ':' + epoch + ':' + note);
+
+  // Écho optimiste : le poêle republiera status/maintenance dans la foulée et
+  // écrasera ceci avec ce qu'il a réellement gardé en NVS.
+  maintState[key] = { epoch: epoch, note: note };
+  applyMaintenance({
+    [cfg.json]: epoch, [cfg.json + '_note']: note,
+    ...Object.fromEntries(Object.entries(MAINT_ITEMS)
+      .filter(([k]) => k !== key)
+      .flatMap(([k, c]) => [[c.json, maintState[k].epoch], [c.json + '_note', maintState[k].note]]))
+  });
+
+  maintCancel(key);
+  showToast('Entretien enregistré');
+}
+
+// Changer le joint : opération à froid, poêle à l'arrêt — sans rapport avec une
+// panne. Conditions : système en veille ET température ≤ 40°. L'utilisateur choisit
+// le côté, le firmware entrouvre la trappe + déverrouille la porte, puis attend
+// « J'ai terminé » pour refermer la trappe (vérif. porte fermée côté firmware).
+let jointServiceActive = false;   // true entre le démarrage et « terminé »
+let jointSide = 'l';
+let jointDonePending = false;     // « Terminé » cliqué : ne pas ré-afficher la
+                                  // bannière pendant que le firmware referme la trappe
+                                  // (isJointServiceActive() reste vrai un court instant)
+
+function changerJoint() {
+  // Service déjà en cours : afficher directement la bannière « Terminé » sans
+  // ré-appliquer le verrou froid/veille (le poêle est en pleine intervention).
+  if (jointServiceActive) {
+    showJointView('progress');
+    showJointBanner();
+    return;
+  }
+  if (systemState !== 'standby') {
+    alert('Le poêle doit être à l\'arrêt (en veille) pour changer le joint. Arrêtez-le et laissez-le refroidir.');
+    return;
+  }
+  // Fail-CLOSED sur température inconnue : après un redémarrage du firmware le
+  // thermocouple n'est pas encore prêt et l'afficheur montre « —° » (parseFloat →
+  // NaN). Si on ne bloque pas ce cas, le garde « ≤ 40° » est ignoré et la trappe
+  // peut s'ouvrir à n'importe quelle température (seule la limite firmware à 100°
+  // reste). On exige donc une lecture valide ET ≤ 40°.
+  const temp = parseFloat(document.getElementById('stove-temp').textContent);
+  if (isNaN(temp)) {
+    alert('Température du poêle inconnue pour le moment. Attendez une lecture valide (quelques secondes après la mise sous tension) avant de changer le joint.');
+    return;
+  }
+  if (temp > 40) {
+    alert('Le poêle est encore chaud (' + Math.round(temp) + '°). Laissez-le refroidir sous 40° avant de changer le joint.');
+    return;
+  }
+  showJointView('choose');
+  showJointBanner();
+}
+
+function jointStart(side) {
+  jointSide = side;
+  jointServiceActive = true;
+  publish('cmd/joint_service', side);   // firmware: entrouvre la trappe + déverrouille
+  setJointSideLabel(side);
+  showJointView('progress');
+  showJointBanner();
+  showToast('Ouverture de la trappe côté ' + (side === 'r' ? 'droite' : 'gauche') + '…');
+}
+
+function jointDone() {
+  publish('cmd/joint_done', '1');       // firmware: vérifie porte fermée, referme la trappe
+  jointServiceActive = false;
+  jointDonePending   = true;            // ignorer les status/full « actif » résiduels
+  closeJointBanner();
+  showToast('Fermeture de la trappe…');
+}
+
+// « Annuler » n'est proposé qu'avant le démarrage (vue « choix du côté ») : aucune
+// commande n'a encore été envoyée, on referme simplement la bannière.
+function jointCancel() {
+  closeJointBanner();
+}
+
+// Reflète l'état de service du firmware (status/full → joint_active/joint_side) pour
+// que la bannière réapparaisse après un rechargement/reconnexion pendant le service.
+function syncJointService(active, side) {
+  if (active) {
+    // « Terminé » déjà cliqué : on attend que le firmware finisse de refermer ;
+    // ne pas ré-ouvrir la bannière sur l'état actif résiduel.
+    if (jointDonePending) return;
+    jointServiceActive = true;
+    if (side) { jointSide = side; setJointSideLabel(side); }
+    showJointView('progress');
+    showJointBanner();
+  } else {
+    // Le firmware a refermé la trappe (fin du service) — masquer la bannière.
+    jointDonePending = false;
+    if (jointServiceActive) {
+      jointServiceActive = false;
+      closeJointBanner();
+    }
+  }
+}
+
+function setJointSideLabel(side) {
+  document.getElementById('joint-side-lbl').textContent = (side === 'r' ? 'droite' : 'gauche');
+}
+
+function showJointView(which) {
+  document.getElementById('joint-choose').style.display   = (which === 'choose')   ? '' : 'none';
+  document.getElementById('joint-progress').style.display = (which === 'progress') ? '' : 'none';
+}
+
+function showJointBanner() {
+  document.getElementById('joint-banner').classList.add('show');
+}
+
+function closeJointBanner() {
+  document.getElementById('joint-banner').classList.remove('show');
+}
+
+// ============================================================
+// PARAMÈTRES — MAISON
+// ============================================================
+function setInsulation(val, save = true) {
+  insulation = val;
+  ['poor','average','good'].forEach(v =>
+    document.getElementById('ins-'+v).classList.toggle('active', v === val)
+  );
+  if (save) saveHouseParamsLocal();
+}
+
+function saveHouseParamsLocal() {
+  localStorage.setItem(LS_HOUSE, JSON.stringify({
+    size: document.getElementById('house-size').value,
+    insulation
+  }));
+}
+
+function saveHouseParams() {
+  saveHouseParamsLocal();
+  publish('cmd/house_params', JSON.stringify({
+    size: document.getElementById('house-size').value,
+    insulation
+  }));
+  alert('Paramètres de la maison enregistrés.');
+}
+
+// ============================================================
+// BASCULES UI
+// ============================================================
+function toggleSettings() {
+  settingsOpen = !settingsOpen;
+  document.getElementById('settings-body').classList.toggle('open', settingsOpen);
+  document.getElementById('settings-arrow').classList.toggle('open', settingsOpen);
+}
+
+// ============================================================
+// OPTIONS — PROGRAMMATION DE TEMPÉRATURE
+// ============================================================
+const SCHED_SLOTS = 12, SCHED_TMIN = 18, SCHED_TMAX = 23;
+const SPL = 28, SPR = 312, SPT = 10, SPB = 133;
+const SPW = SPR - SPL, SPH = SPB - SPT;
+
+function spX(i)     { return SPL + i * SPW / (SCHED_SLOTS - 1); }
+function spY(t)     { return SPT + (SCHED_TMAX - t) / (SCHED_TMAX - SCHED_TMIN) * SPH; }
+function spYtoT(py) { return Math.round(Math.min(SCHED_TMAX, Math.max(SCHED_TMIN, SCHED_TMAX - (py - SPT) / SPH * (SCHED_TMAX - SCHED_TMIN)))); }
+function tempToLabel(t) { return 'T' + (t - SCHED_TMIN + 1); }  // 18→T1, 19→T2 … 23→T6
+
+function sanitizeSched(arr) {
+  const out = Array(SCHED_SLOTS).fill(20);
+  if (Array.isArray(arr))
+    for (let i = 0; i < SCHED_SLOTS; i++)
+      if (arr[i] != null) out[i] = Math.min(SCHED_TMAX, Math.max(SCHED_TMIN, Math.round(arr[i])));
+  return out;
+}
+function isWeekendDay() { const g = new Date().getDay(); return g === 0 || g === 6; }   // 0=dim, 6=sam
+function activeSched()  { return isWeekendDay()              ? schedWeekend : schedWeek; } // courbe du jour
+function editSched()    { return schedEditMode === 'weekend' ? schedWeekend : schedWeek; } // courbe éditée
+function persistSched() { localStorage.setItem(LS_SCHED_V2, JSON.stringify({ week: schedWeek, weekend: schedWeekend })); }
+function schedPayload() {
+  // La courbe du jour est sérialisée en premier : le firmware ne lit que les 12 premiers entiers.
+  return isWeekendDay()
+    ? JSON.stringify({ weekend: schedWeekend, week: schedWeek })
+    : JSON.stringify({ week: schedWeek, weekend: schedWeekend });
+}
+
+function initSchedule() {
+  const v2 = JSON.parse(localStorage.getItem(LS_SCHED_V2) || 'null');
+  if (v2 && Array.isArray(v2.week) && Array.isArray(v2.weekend)) {
+    schedWeek    = sanitizeSched(v2.week);
+    schedWeekend = sanitizeSched(v2.weekend);
+  } else {
+    // Migration : ancienne programmation unique → copiée sur semaine + week-end
+    const legacy = JSON.parse(localStorage.getItem(LS_SCHED) || 'null');
+    if (Array.isArray(legacy) && legacy.length === SCHED_SLOTS) {
+      schedWeek    = sanitizeSched(legacy);
+      schedWeekend = sanitizeSched(legacy);
+    }
+  }
+  schedEnabled = localStorage.getItem(LS_SCHED_EN) === '1';
+  document.getElementById('sched-badge').classList.toggle('active', schedEnabled);
+}
+
+function toggleOptions() {
+  optionsOpen = !optionsOpen;
+  document.getElementById('options-body').classList.toggle('open', optionsOpen);
+  document.getElementById('options-arrow').classList.toggle('open', optionsOpen);
+  if (optionsOpen) {
+    document.getElementById('tog-sched-enable').checked = schedEnabled;
+    // Bloc « rapport quotidien » désactivé (le poêle l'envoie via ntfy) : ni
+    // les éléments ni updateDailyReportStatus() n'existent plus. Les laisser
+    // ici plantait l'ouverture du panneau AVANT le dessin de la courbe.
+    // document.getElementById('tog-daily-report').checked = dailyReport.enabled;
+    // document.getElementById('daily-report-time').value  = dailyReport.time;
+    // updateDailyReportStatus();
+    schedEditMode = isWeekendDay() ? 'weekend' : 'week';   // ouvrir sur la courbe du jour
+    updateSchedTabs();
+    renderScheduleSVG();
+    updateSchedStatus();
+  }
+}
+
+function setSchedEditMode(mode) {
+  schedEditMode = mode;
+  updateSchedTabs();
+  renderScheduleSVG();
+}
+
+function updateSchedTabs() {
+  const w = document.getElementById('sched-tab-week');
+  const e = document.getElementById('sched-tab-weekend');
+  if (w) w.classList.toggle('active', schedEditMode === 'week');
+  if (e) e.classList.toggle('active', schedEditMode === 'weekend');
+}
+
+function setSchedEnabled(on) {
+  schedEnabled = on;
+  lockField('sched_enabled');
+  localStorage.setItem(LS_SCHED_EN, on ? '1' : '0');
+  document.getElementById('sched-badge').classList.toggle('active', on);
+  updateSchedStatus();
+  if (client && client.connected) {
+    // Le firmware est la seule autorité : on lui dit activé/désactivé (persisté en
+    // NVS + renvoyé dans sched_enabled), et tous les téléphones convergent dessus.
+    client.publish(prefix + '/cmd/schedule_en', on ? '1' : '0', { qos:1 });
+    if (on) {
+      // Pousse la courbe du jour (jour actif en premier) pour que le firmware l'ait.
+      client.publish(prefix + '/schedule', schedPayload(), { qos:1, retain:true });
+    }
+    // On NE vide PAS la courbe retenue à la désactivation : c'est la seule copie
+    // partagée entre téléphones. Le firmware ne l'applique que si la programmation
+    // est activée (activation découplée des données), donc la garder est sans risque.
+  }
+}
+
+function applyScheduleSlot() {
+  // Le firmware (heure NTP) est le SEUL à appliquer chaque créneau et renvoie le
+  // résultat via room_setpoint dans status/full (voir applyFull). L'app ne publie
+  // plus cmd/room_temp depuis la programmation : quand plusieurs téléphones le
+  // faisaient, chacun suivait l'horloge de son navigateur et ils se disputaient la
+  // consigne — entre eux et avec le firmware. Chaque téléphone affiche désormais ce
+  // que le poêle rapporte, donc tous restent d'accord. Cette fonction ne rafraîchit
+  // que le résumé « Maintenant / Suivant ».
+  updateSchedStatus();
+}
+
+function updateSchedStatus() {
+  const el = document.getElementById('sched-status');
+  if (!el) return;
+  if (!schedEnabled) { el.textContent = ''; return; }
+  const arr  = activeSched();
+  // Préfère le créneau rapporté par le poêle (NTP, partagé par tous les téléphones) ;
+  // repli sur l'horloge de cet appareil tant qu'aucun statut n'est arrivé.
+  const slot = (fwSchedSlot >= 0 && fwSchedSlot < SCHED_SLOTS)
+             ? fwSchedSlot
+             : Math.floor(new Date().getHours() / 2);
+  const nextSlot = (slot + 1) % SCHED_SLOTS;
+  const dayLbl = isWeekendDay() ? 'Week-end' : 'Semaine';
+  el.textContent = dayLbl + ' · ' + (slot*2) + 'h–' + (slot*2+2) + 'h : ' + tempToLabel(arr[slot]) + '  →  Suivant : ' + tempToLabel(arr[nextSlot]);
+}
+
+function smoothPath(pts) {
+  if (pts.length < 2) return '';
+  let d = 'M ' + pts[0].x.toFixed(1) + ' ' + pts[0].y.toFixed(1);
+  for (let i = 1; i < pts.length; i++) {
+    const p0 = pts[Math.max(0, i - 2)];
+    const p1 = pts[i - 1];
+    const p2 = pts[i];
+    const p3 = pts[Math.min(pts.length - 1, i + 1)];
+    const cp1x = (p1.x + (p2.x - p0.x) / 6).toFixed(1);
+    const cp1y = (p1.y + (p2.y - p0.y) / 6).toFixed(1);
+    const cp2x = (p2.x - (p3.x - p1.x) / 6).toFixed(1);
+    const cp2y = (p2.y - (p3.y - p1.y) / 6).toFixed(1);
+    d += ' C ' + cp1x + ' ' + cp1y + ' ' + cp2x + ' ' + cp2y + ' ' + p2.x.toFixed(1) + ' ' + p2.y.toFixed(1);
+  }
+  return d;
+}
+
+// Courbe avec « bouclage » de 24h → 0h : de courtes amorces débordent aux deux
+// extrémités pour montrer que l'horaire est cyclique (la valeur de 22h revient à 0h).
+function smoothPathWrap(pts) {
+  const n = pts.length;
+  if (n < 2) return smoothPath(pts);
+  const over = (spX(1) - spX(0)) * 0.6;               // débordement des amorces
+  const lead  = { x: pts[0].x - over,     y: pts[n - 1].y };  // arrive « de plus haut » (valeur de 22h)
+  const trail = { x: pts[n - 1].x + over, y: pts[0].y };      // repart vers la valeur de 0h
+  return smoothPath([lead].concat(pts, [trail]));
+}
+
+function renderScheduleSVG() {
+  const svg = document.getElementById('schedule-svg');
+  if (!svg) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = '';
+
+  const cur = editSched();   // courbe en cours d'édition (semaine ou week-end)
+  // Le repère du créneau actuel n'a de sens que si on édite la courbe du jour
+  const editingToday = schedEditMode === (isWeekendDay() ? 'weekend' : 'week');
+
+  // Dégradé
+  const defs = document.createElementNS(ns, 'defs');
+  const grad = document.createElementNS(ns, 'linearGradient');
+  grad.setAttribute('id', 'sched-grad'); grad.setAttribute('x1','0'); grad.setAttribute('y1','0'); grad.setAttribute('x2','0'); grad.setAttribute('y2','1');
+  const s1 = document.createElementNS(ns, 'stop'); s1.setAttribute('offset','0%');   s1.setAttribute('stop-color','#CD853F'); s1.setAttribute('stop-opacity','0.28');
+  const s2 = document.createElementNS(ns, 'stop'); s2.setAttribute('offset','100%'); s2.setAttribute('stop-color','#CD853F'); s2.setAttribute('stop-opacity','0.02');
+  grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
+
+  // Lignes de grille horizontales + étiquettes axe Y
+  for (let t = SCHED_TMIN; t <= SCHED_TMAX; t++) {
+    const y = spY(t);
+    const gl = document.createElementNS(ns, 'line');
+    gl.setAttribute('x1', SPL); gl.setAttribute('x2', SPR);
+    gl.setAttribute('y1', y);  gl.setAttribute('y2', y);
+    gl.setAttribute('stroke', t === 20 ? '#e0c8b0' : '#f5ede4');
+    gl.setAttribute('stroke-width', t === 20 ? '1.2' : '0.7');
+    svg.appendChild(gl);
+    const lbl = document.createElementNS(ns, 'text');
+    lbl.setAttribute('x', SPL - 4); lbl.setAttribute('y', y + 3.5);
+    lbl.setAttribute('text-anchor', 'end'); lbl.setAttribute('font-size', '9');
+    lbl.setAttribute('fill', '#bba090'); lbl.textContent = tempToLabel(t);
+    svg.appendChild(lbl);
+  }
+
+  // Mise en surbrillance du créneau de 2h en cours
+  const curSlot = Math.floor(new Date().getHours() / 2);
+  const slotW   = SPW / (SCHED_SLOTS - 1);
+  if (editingToday) {
+    const hlRect = document.createElementNS(ns, 'rect');
+    hlRect.setAttribute('x', spX(curSlot) - slotW / 2); hlRect.setAttribute('y', SPT);
+    hlRect.setAttribute('width', slotW); hlRect.setAttribute('height', SPH);
+    hlRect.setAttribute('fill', 'rgba(139,69,19,0.07)'); hlRect.setAttribute('rx', '3');
+    svg.appendChild(hlRect);
+  }
+
+  const pts = cur.map((t, i) => ({ x: spX(i), y: spY(t) }));
+
+  // Remplissage sous la courbe
+  const fill = document.createElementNS(ns, 'path');
+  fill.setAttribute('id', 'sched-fill');
+  fill.setAttribute('d', smoothPath(pts) + ' L ' + pts[pts.length-1].x + ' ' + SPB + ' L ' + pts[0].x + ' ' + SPB + ' Z');
+  fill.setAttribute('fill', 'url(#sched-grad)'); fill.setAttribute('stroke', 'none');
+  svg.appendChild(fill);
+
+  // Courbe
+  const curve = document.createElementNS(ns, 'path');
+  curve.setAttribute('id', 'sched-curve');
+  curve.setAttribute('d', smoothPathWrap(pts));
+  curve.setAttribute('fill', 'none'); curve.setAttribute('stroke', '#8B4513');
+  curve.setAttribute('stroke-width', '2'); curve.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(curve);
+
+  // Étiquettes axe X
+  for (let i = 0; i < SCHED_SLOTS; i++) {
+    const lbl = document.createElementNS(ns, 'text');
+    lbl.setAttribute('x', spX(i)); lbl.setAttribute('y', SPB + 15);
+    lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '8.5');
+    lbl.setAttribute('fill', editingToday && i === curSlot ? '#8B4513' : '#bba090');
+    lbl.setAttribute('font-weight', editingToday && i === curSlot ? '700' : 'normal');
+    lbl.textContent = (i * 2) + 'h';
+    svg.appendChild(lbl);
+  }
+
+  // Groupes de points déplaçables
+  pts.forEach(function(p, i) {
+    const g = document.createElementNS(ns, 'g');
+    g.setAttribute('class', 'sched-pt'); g.setAttribute('data-idx', i);
+
+    const hit = document.createElementNS(ns, 'circle');
+    hit.setAttribute('cx', p.x); hit.setAttribute('cy', p.y);
+    hit.setAttribute('r', '14'); hit.setAttribute('fill', 'transparent');
+    g.appendChild(hit);
+
+    const dot = document.createElementNS(ns, 'circle');
+    dot.setAttribute('class', 'sched-dot-' + i);
+    dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y);
+    dot.setAttribute('r', '5'); dot.setAttribute('fill', '#8B4513');
+    dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '2');
+    g.appendChild(dot);
+
+    const tlbl = document.createElementNS(ns, 'text');
+    tlbl.setAttribute('class', 'sched-lbl-' + i);
+    tlbl.setAttribute('x', p.x);
+    tlbl.setAttribute('y', p.y < 22 ? p.y + 18 : p.y - 9);
+    tlbl.setAttribute('text-anchor', 'middle'); tlbl.setAttribute('font-size', '9');
+    tlbl.setAttribute('font-weight', '700'); tlbl.setAttribute('fill', '#8B4513');
+    tlbl.textContent = tempToLabel(cur[i]);
+    g.appendChild(tlbl);
+
+    svg.appendChild(g);
+  });
+
+  svg.onmousedown  = schedOnDown;
+  svg.ontouchstart = schedOnDown;
+}
+
+function updateScheduleSVG() {
+  const svg = document.getElementById('schedule-svg');
+  if (!svg) return;
+  const cur = editSched();
+  const pts = cur.map(function(t, i) { return { x: spX(i), y: spY(t) }; });
+
+  const curve = svg.querySelector('#sched-curve');
+  if (curve) curve.setAttribute('d', smoothPathWrap(pts));
+
+  const fill = svg.querySelector('#sched-fill');
+  if (fill) fill.setAttribute('d', smoothPath(pts) + ' L ' + pts[pts.length-1].x + ' ' + SPB + ' L ' + pts[0].x + ' ' + SPB + ' Z');
+
+  pts.forEach(function(p, i) {
+    const g = svg.querySelector('.sched-pt[data-idx="' + i + '"]');
+    if (!g) return;
+    g.querySelectorAll('circle').forEach(function(c) { c.setAttribute('cy', p.y); });
+    const lbl = g.querySelector('.sched-lbl-' + i);
+    if (lbl) {
+      lbl.setAttribute('y', p.y < 22 ? p.y + 18 : p.y - 9);
+      lbl.textContent = tempToLabel(cur[i]);
+    }
+  });
+}
+
+function svgClientToPoint(svg, clientX, clientY) {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX; pt.y = clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function schedOnDown(e) {
+  const g = e.target.closest('.sched-pt');
+  if (!g) return;
+  e.preventDefault();
+  const svg = document.getElementById('schedule-svg');
+  schedDrag = { idx: parseInt(g.getAttribute('data-idx')), svg: svg };
+  window.addEventListener('mousemove', schedOnMove);
+  window.addEventListener('mouseup',   schedOnUp);
+  window.addEventListener('touchmove', schedOnMove, { passive: false });
+  window.addEventListener('touchend',  schedOnUp);
+}
+
+function schedOnMove(e) {
+  if (!schedDrag) return;
+  e.preventDefault();
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const sp      = svgClientToPoint(schedDrag.svg, 0, clientY);
+  const newTemp = spYtoT(sp.y);
+  const cur = editSched();
+  if (cur[schedDrag.idx] === newTemp) return;
+  cur[schedDrag.idx] = newTemp;
+  updateScheduleSVG();
+  updateSchedStatus();
+}
+
+function schedOnUp() {
+  schedDrag = null;
+  window.removeEventListener('mousemove', schedOnMove);
+  window.removeEventListener('mouseup',   schedOnUp);
+  window.removeEventListener('touchmove', schedOnMove);
+  window.removeEventListener('touchend',  schedOnUp);
+}
+
+function saveSchedule() {
+  persistSched();
+  updateSchedStatus();
+  if (!client || !client.connected) { showToast('Enregistré localement (non connecté)'); return; }
+  // Publie toujours la courbe retenue (même désactivée) pour que tous les téléphones
+  // convergent ; le firmware ne l'applique que si la programmation est activée.
+  client.publish(prefix + '/schedule', schedPayload(), { qos: 1, retain: true });
+  updateSchedStatus();
+  showToast(schedEnabled ? 'Programmation enregistrée et appliquée' : 'Programmation enregistrée (activez pour l\'appliquer)');
+}
+
+// ============================================================
+// NOTIFICATIONS  — DÉSACTIVÉES (juil. 2026)
+// ============================================================
+// Toutes les alertes viennent maintenant du poêle lui-même, par ntfy
+// (NtfyNotification.cpp dans le firmware). Deux raisons d'avoir tout coupé
+// ici plutôt que de garder les deux canaux :
+//   • triggerPush() n'était PAS une vraie notification push — c'était un
+//     `new Notification()` local, qui n'existe que tant que l'onglet tourne.
+//     Le canal ntfy, lui, marche application fermée et téléphone verrouillé.
+//   • garder les deux produisait des doublons (l'un local, l'autre poussé par
+//     le relais), avec deux anti-rebond séparés qui ne se voyaient pas.
+//
+// Le bloc est conservé en commentaire pour pouvoir revenir en arrière ; le
+// gestionnaire 'push' du service worker est neutralisé de la même façon.
+/*
+function triggerPush(tag, title, body) {
+  if (Notification.permission === 'granted') {
+    const now = Date.now();
+    if (_pushThrottle[tag] && now - _pushThrottle[tag] < 60_000) return;
+    _pushThrottle[tag] = now;
+    const n = new Notification(title, { body, icon: 'icon-192.png', tag, renotify: true });
+    n.onclick = () => { window.focus(); n.close(); };
+  }
+}
+
+// Fires only when BOTH sides are empty, once per transition into that state
+// (not on every per-second MQTT update while it stays empty).
+function checkBothMagazinesEmpty() {
+  if (logL === 0 && logR === 0) {
+    if (!bothMagazinesEmptyNotified) {
+      bothMagazinesEmptyNotified = true;
+      triggerPush('empty-both', '🪵 WoodMood — Cassettes vides', 'Rechargez les deux cassettes de bûches');
+    }
+  } else {
+    bothMagazinesEmptyNotified = false;
+  }
+}
+*/
+
+// ============================================================
+// RAPPORT QUOTIDIEN DES BÛCHES — DÉSACTIVÉ (juil. 2026)
+// ============================================================
+// Le rapport est maintenant envoyé par le poêle via ntfy, une fois par jour à
+// NTFY_DAILY_HOUR (20:00) et uniquement s'il tourne en automatique — mêmes
+// conditions qu'ici, même texte. L'heure n'est plus réglable depuis l'app :
+// elle est fixée dans le firmware. Pour la rendre réglable il faudrait un
+// nouveau sujet MQTT (cmd/daily_time) + une sauvegarde NVS côté poêle.
+/*
+function initDailyReport() {
+  const saved = JSON.parse(localStorage.getItem(LS_DAILY) || 'null');
+  if (saved && typeof saved === 'object') {
+    dailyReport.enabled  = !!saved.enabled;
+    if (/^\d{2}:\d{2}$/.test(saved.time || '')) dailyReport.time = saved.time;
+    dailyReport.lastSent = saved.lastSent || '';
+  }
+  const tog = document.getElementById('tog-daily-report');
+  const inp = document.getElementById('daily-report-time');
+  if (tog) tog.checked = dailyReport.enabled;
+  if (inp) inp.value   = dailyReport.time;
+  updateDailyReportStatus();
+  // Vérifie chaque minute — l'intervalle survit à la mise en veille de l'onglet
+  // et rattrape l'heure exacte tant que l'app reste chargée.
+  if (dailyReportTimer) clearInterval(dailyReportTimer);
+  dailyReportTimer = setInterval(checkDailyReport, 30_000);
+}
+
+function persistDailyReport() {
+  localStorage.setItem(LS_DAILY, JSON.stringify(dailyReport));
+}
+
+async function setDailyReportEnabled(on) {
+  dailyReport.enabled = on;
+  // Nouvelle activation : autorise un envoi aujourd'hui même si un précédent
+  // rapport avait déjà été marqué comme envoyé.
+  if (on) dailyReport.lastSent = '';
+  persistDailyReport();
+  updateDailyReportStatus();
+  // La livraison app fermée passe par le relais, qui a besoin d'un abonnement
+  // push. À l'activation, on s'assure que les notifications push sont actives
+  // (demande la permission + abonne) puis on enregistre l'horaire côté relais.
+  if (on && !_pushSub) {
+    await enablePushNotifications();
+  }
+  syncDailyToRelay();
+}
+
+function setDailyReportTime(t) {
+  if (!/^\d{2}:\d{2}$/.test(t)) return;
+  dailyReport.time = t;
+  dailyReport.lastSent = '';   // change d'heure → l'envoi du jour redevient possible
+  persistDailyReport();
+  updateDailyReportStatus();
+  syncDailyToRelay();
+}
+
+// Enregistre l'horaire du rapport quotidien sur le relais (livraison app fermée).
+// Sans abonnement push (_pushSub), le relais n'a rien à qui envoyer → on saute.
+function syncDailyToRelay() {
+  if (!_pushSub) return;
+  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+  fetch(`${RELAY_URL}/daily`, {
+    method: 'POST', headers: RELAY_HEADERS,
+    body: JSON.stringify({
+      endpoint: _pushSub.endpoint,
+      enabled:  dailyReport.enabled,
+      time:     dailyReport.time,
+      tz
+    })
+  }).catch(() => {});
+}
+
+function updateDailyReportStatus() {
+  const el = document.getElementById('daily-report-status');
+  if (!el) return;
+  if (!dailyReport.enabled) { el.textContent = ''; return; }
+  el.textContent = 'Rapport prévu chaque jour à ' + dailyReport.time
+                 + (dailyReport.lastSent === todayStr() ? ' · envoyé aujourd’hui ✓' : '');
+}
+
+function todayStr() {
+  const n = new Date();
+  return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0')
+       + '-' + String(n.getDate()).padStart(2, '0');
+}
+
+function checkDailyReport() {
+  if (!dailyReport.enabled) return;
+  const now = new Date();
+  const cur = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  if (cur !== dailyReport.time) return;
+  if (dailyReport.lastSent === todayStr()) return;
+  // Condition : le poêle doit être en marche (automatique) — pas démarrage,
+  // refroidissement, veille ni défaut. Si ce n'est pas le cas à l'heure prévue,
+  // on ne marque rien : un nouvel essai est possible tant que la minute dure.
+  if (systemState !== 'auto') return;
+
+  dailyReport.lastSent = todayStr();
+  persistDailyReport();
+  const total = logL + logR;
+  triggerPush('daily-report', '⏱️ ' + formatTimeLeft(total) + ' restant',
+    'G : ' + logL + ' · R : ' + logR);
+  updateDailyReportStatus();
+}
+
+// 40 min de combustion estimée par bûche (les deux côtés confondus).
+function formatTimeLeft(logs) {
+  const mins = logs * 40;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return m + ' min';
+  if (m === 0) return h + ' h';
+  return h + ' h ' + m + ' min';
+}
+*/
+// ── fin du bloc « rapport quotidien » désactivé ──
+
+// ============================================================
+// ABONNEMENT PUSH (relais + service worker) — DÉSACTIVÉ (juil. 2026)
+// ============================================================
+// Plus aucun abonnement push n'est créé : le poêle envoie ses alertes par ntfy,
+// sans passer par le relais ni par le service worker. Conservé en commentaire
+// pour pouvoir revenir en arrière.
+/*
+async function enablePushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    updatePushStatus('unsupported'); return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') { updatePushStatus('blocked'); return; }
+
+  try {
+    const { key } = await fetch(`${RELAY_URL}/vapid-public-key`, { headers: RELAY_HEADERS }).then(r => r.json());
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(key)
+    });
+    // Même normalisation qu'à la connexion : le relais range les abonnements par
+    // numéro de série, donc une casse différente ici créerait un deuxième poêle
+    // fantôme dans son magasin et les notifications n'arriveraient jamais.
+    const serial = normalizeSerial(document.getElementById('cfg-serial')?.value)
+                   || cfg.serial || 'JJQF9D';
+    // Enregistre aussi l'horaire du rapport quotidien dès l'abonnement (le relais
+    // n'appliquera l'envoi que si enabled=true).
+    const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+    await fetch(`${RELAY_URL}/subscribe`, {
+      method: 'POST', headers: RELAY_HEADERS,
+      body: JSON.stringify({
+        subscription: sub, serial,
+        daily: { enabled: dailyReport.enabled, time: dailyReport.time, tz }
+      })
+    });
+    _pushSub = sub;
+    localStorage.setItem(LS_PUSH, '1');
+    updatePushStatus('enabled');
+  } catch(e) {
+    console.error('Push subscribe failed:', e);
+    updatePushStatus('error');
+  }
+}
+
+async function disablePushNotifications() {
+  if (_pushSub) {
+    await fetch(`${RELAY_URL}/subscribe`, {
+      method: 'DELETE', headers: RELAY_HEADERS,
+      body: JSON.stringify({ endpoint: _pushSub.endpoint })
+    }).catch(() => {});
+    await _pushSub.unsubscribe().catch(() => {});
+    _pushSub = null;
+  }
+  localStorage.removeItem(LS_PUSH);
+  updatePushStatus('disabled');
+}
+*/
+// ── fin du bloc « abonnement push » désactivé ──
+
+// Demande au poêle d'envoyer une notification ntfy de test. C'est le poêle qui
+// émet — l'app ne fait que transmettre l'ordre — donc le test échoue forcément
+// si le poêle n'est pas connecté au courtier. On le dit clairement plutôt que
+// d'afficher un faux succès.
+async function testPushNotification() {
+  const btn = document.getElementById('push-test-btn');
+  if (!client || !client.connected) {
+    btn.textContent = '⚠️ Poêle hors ligne — test impossible';
+    setTimeout(() => { btn.textContent = '🧪 Envoyer une notification test'; }, 5000);
+    return;
+  }
+  btn.textContent = 'Envoi…';
+  btn.disabled = true;
+  client.publish(prefix + '/cmd/push_test', '1', { qos:1 });
+  btn.textContent = '✅ Demandé — vérifiez l\'application ntfy';
+  setTimeout(() => { btn.textContent = '🧪 Envoyer une notification test'; btn.disabled = false; }, 6000);
+}
+
+// Conservé : encore appelé par le bloc push désactivé si on le réactive, et
+// inoffensif ici (les boutons activer/désactiver n'existent plus dans le DOM).
+function updatePushStatus(state) {
+  const el   = document.getElementById('push-notif-status');
+  const btn  = document.getElementById('push-enable-btn');
+  const btnD = document.getElementById('push-disable-btn');
+  const btnT = document.getElementById('push-test-btn');
+  if (!el) return;
+  const map = {
+    enabled:     '✅ Notifications push actives',
+    disabled:    '',
+    blocked:     '❌ Bloqué — activez dans les réglages du navigateur/téléphone',
+    unsupported: '⚠️ Non supporté sur ce navigateur',
+    error:       '⚠️ Échec de configuration — réessayez'
+  };
+  el.textContent = map[state] ?? '';
+  const on = state === 'enabled';
+  if (btn)  btn.style.display  = on ? 'none'  : 'block';
+  if (btnD) btnD.style.display = on ? 'block' : 'none';
+  if (btnT) btnT.style.display = on ? 'block' : 'none';
+}
+
+/*
+function urlBase64ToUint8Array(base64) {
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+*/
+
+// ============================================================
+// LIEN D'ABONNEMENT NTFY
+// ============================================================
+// Le poêle publie son adresse ntfy en retained sur status/ntfy_link, donc elle
+// arrive dès la connexion sans que le poêle ait à être réveillé. Elle contient
+// un secret propre à chaque poêle : c'est le lien qui fait office de mot de
+// passe, d'où l'absence d'affichage tant qu'on ne l'a pas reçu.
+let ntfyLink = '';
+
+function setNtfyLink(url) {
+  ntfyLink = (url || '').trim();
+  const box = document.getElementById('ntfy-link-box');
+  const btn = document.getElementById('ntfy-copy-btn');
+  if (!box) return;
+  if (ntfyLink) {
+    box.textContent = ntfyLink;
+    if (btn) btn.disabled = false;
+  } else {
+    box.textContent = 'Notifications indisponibles sur ce poêle.';
+    if (btn) btn.disabled = true;
+  }
+}
+
+async function copyNtfyLink() {
+  if (!ntfyLink) return;
+  try {
+    await navigator.clipboard.writeText(ntfyLink);
+    showToast('Lien copié — collez-le dans l\'application ntfy');
+  } catch(e) {
+    // clipboard refusé (http, permissions) — on ouvre l'onglet à la place
+    window.open(ntfyLink, '_blank', 'noopener');
+  }
+}
+
+// ============================================================
+// SERVICE WORKER (PWA)
+// ============================================================
+// Enregistré uniquement pour l'installation PWA / le cache. L'abonnement push
+// n'est plus rétabli au démarrage : les alertes passent par ntfy.
+//
+// MIGRATION — indispensable, pas cosmétique : le relais continue d'écouter le
+// MQTT et de pousser vers TOUS les abonnements déjà enregistrés. Se contenter
+// de ne plus en créer de nouveaux ne suffit donc pas : les téléphones déjà
+// abonnés continueraient de recevoir les anciennes alertes (dont « cassette
+// vide » côté par côté) en plus des notifications ntfy. On désinscrit donc
+// l'abonnement existant, une fois, au premier chargement de cette version.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('service-worker.js').then(async reg => {
+    try {
+      const existing = await reg.pushManager.getSubscription();
+      if (existing) {
+        await fetch(`${RELAY_URL}/subscribe`, {
+          method: 'DELETE', headers: RELAY_HEADERS,
+          body: JSON.stringify({ endpoint: existing.endpoint })
+        }).catch(() => {});      // le relais peut être injoignable : on désinscrit quand même
+        await existing.unsubscribe().catch(() => {});
+      }
+      localStorage.removeItem(LS_PUSH);
+    } catch(e) {
+      console.warn('Nettoyage de l\'ancien abonnement push impossible:', e);
+    }
+  });
+}
+</script>
+</body>
+</html>
