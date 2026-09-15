@@ -69,6 +69,24 @@
     .btn-resolve{background:#27ae60;font-size:1rem;font-weight:700}
     .btn-reopen{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.4);font-size:.82rem}
 
+    /* ── Bannière « Ajoutez une bûche » (chargement manuel) ──
+       Même emplacement que les bannières de défaut et de joint, mais en ambre :
+       ce n'est pas une panne. Le poêle fonctionne normalement, il attend juste
+       que l'utilisateur fasse ce que la machine fait d'habitude. */
+    #reload-banner{display:none;background:#b9770e;color:#fff;border-radius:18px;
+      padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    #reload-banner.show{display:block}
+    .reload-title{font-size:1.05rem;font-weight:700;margin-bottom:6px}
+    .reload-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+    .reload-badge{display:inline-block;background:rgba(255,255,255,.2);border-radius:8px;
+      padding:3px 10px;font-size:.8rem;font-weight:600;letter-spacing:.04em}
+    /* Le compte à rebours d'abandon vire au rouge dans les 10 dernières minutes :
+       passé ce délai le poêle se met en refroidissement tout seul. */
+    .reload-badge.urgent{background:rgba(192,57,43,.85)}
+    .reload-msg{font-size:.84rem;opacity:.85;margin-bottom:12px}
+    .btn-reload-ack{background:#27ae60;font-size:1rem;font-weight:700}
+    .btn-reload-ack:disabled{background:rgba(255,255,255,.2);cursor:default}
+
     /* ── Joint (gasket) service banner — same slot as the fault banner ── */
     #joint-banner{display:none;background:#5a3410;color:#fff;border-radius:18px;
       padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
@@ -424,6 +442,26 @@
     </div>
   </div>
 
+  <!-- ── Bannière « Ajoutez une bûche » — chargement manuel ──
+       Pilotée uniquement par le topic RETENU status/reload_req. Le firmware
+       l'efface lui-même sur défaut, refroidissement, veille et changement de
+       mode, donc l'app n'a aucune règle de priorité à dupliquer ici. -->
+  <div id="reload-banner">
+    <div class="reload-title">🪵 Ajoutez une bûche</div>
+    <div class="reload-badges">
+      <span class="reload-badge" id="reload-since">à l'instant</span>
+      <span class="reload-badge" id="reload-deadline">—</span>
+    </div>
+    <div class="reload-msg">
+      Chargement manuel : ouvrez la porte du foyer, posez une bûche, refermez.
+      Le poêle voit la porte se refermer et reprend seul — le bouton ci-dessous
+      n'est utile que si vous avez déjà chargé sans ouvrir la porte principale.
+    </div>
+    <button class="btn btn-reload-ack btn-full" id="reload-ack-btn" onclick="manualFeedAck()">
+      ✓ C'est fait, la bûche est dedans
+    </button>
+  </div>
+
   <!-- ── Temperature ── -->
   <div class="card-warm">
     <!-- Principale : température ambiante BLE + température souhaitée -->
@@ -532,6 +570,19 @@
         <svg id="schedule-svg" width="100%" viewBox="-8 0 340 155" style="display:block;touch-action:none;overflow:visible"></svg>
         <div id="sched-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
         <button class="btn btn-brown btn-sm btn-full" style="margin-top:8px" onclick="saveSchedule()">Enregistrer et appliquer</button>
+
+        <!-- ── Chargement des bûches ──
+             cmd/feed_mode, à ne pas confondre avec cmd/auto_insert_en (le
+             coupe-circuit de test, non exposé ici) ni avec le mode de
+             ventilation manuel. Le poêle régule exactement pareil : seule
+             change la personne qui met la bûche. -->
+        <div class="divider" style="margin:16px 0 12px"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px">
+          <span style="font-size:.85rem;font-weight:600;color:#5a3015">Chargement manuel des bûches</span>
+          <label class="tgl"><input type="checkbox" id="feed-mode-toggle" onchange="setFeedMode(this.checked)"><span class="tgl-sl"></span></label>
+        </div>
+        <div style="font-size:.78rem;color:#888">Le poêle régule la température comme d'habitude, mais c'est vous qui rechargez : quand une bûche est nécessaire, il sonne et vous prévient au lieu de la charger lui-même.</div>
+        <div id="feed-mode-note" style="font-size:.78rem;font-weight:600;color:#b9770e;margin-top:6px;min-height:1.1em"></div>
 
         <!-- ── Mode silencieux ── -->
         <div class="divider" style="margin:16px 0 12px"></div>
@@ -904,6 +955,24 @@ let agreeAccepted    = JSON.parse(localStorage.getItem(LS_AGREE) || 'null');
 let agreeLive        = null;              // version publiée ; null = pas encore lue
 let agreeUrl         = AGREEMENT_URL;     // écrasée par le champ `url` de version.json
 let agreeOpened      = false;             // conditions ouvertes pendant cette session
+// ── Chargement manuel (FEED_MANUAL côté firmware) ───────────────────────────
+// feedManual      : le poêle demande les bûches au lieu de les charger.
+// reloadPending   : une bûche est demandée MAINTENANT (topic status/reload_req).
+// reloadRaisedMs  : instant local du lever de la demande, reconstitué à partir
+//                   du champ since_sec. Indispensable : le firmware ne publie
+//                   reload_req que sur changement, donc since_sec est figé à la
+//                   réception et c'est l'app qui doit faire avancer l'horloge.
+// stoveSeenMs     : dernière preuve de vie du poêle (status/full arrive à 1 Hz).
+//                   reload_req est RETENU : sans ce garde-fou, se connecter à un
+//                   poêle éteint rejouerait une demande vieille de plusieurs
+//                   jours et l'app réclamerait une bûche pour un foyer froid.
+let feedManual       = false;
+let reloadPending    = false;
+let reloadPromptNum  = 0;
+let reloadRaisedMs   = 0;
+let reloadAckSentMs  = 0;
+let reloadTicker     = null;
+let stoveSeenMs      = 0;
 let client           = null;
 let prefix           = '';
 let roomTemp         = 18;   // T1 par défaut (= consigne 275 °C côté poêle)
@@ -1368,6 +1437,9 @@ function onMessage(topic, payloadBuf) {
     updateBleRoomTemp(); return;
   }
   if (sub === 'status/ntfy_link') { setNtfyLink(payload); return; }
+  // Demande de rechargement (chargement manuel) — topic RETENU, publié par le
+  // firmware uniquement sur changement d'état ou de numéro de rappel.
+  if (sub === 'status/reload_req') { applyReloadReq(payload); return; }
   if (sub === 'status/log_level_l') {
     if (ignoreEcho('log_l', parseInt(payload) || 0)) return;
     const prevL = logL;
@@ -1462,6 +1534,12 @@ function applyFull(d) {
     const rv = document.getElementById('room-val');
     if (rv) rv.classList.toggle('sched-driven',
                                 d.room_src === 'sched' && !isLocked('room_temp'));
+  }
+  // Preuve de vie : status/full arrive à 1 Hz tant que le poêle est en ligne.
+  // Sert à ne pas afficher une demande de bûche retenue par un poêle éteint.
+  stoveSeenMs = Date.now();
+  if (d.feed_manual !== undefined && !isLocked('feed_mode')) {
+    applyFeedMode(!!d.feed_manual);
   }
   if (d.system_active !== undefined) sysActive = !!d.system_active;
   if (d.fault !== undefined) setFault(d.fault, d.fault_side, d.fault_ready);
@@ -1790,6 +1868,152 @@ function setFaultMsg(msg) {
   lastFaultMsg = translateFaultMsg(msg);
   const el = document.getElementById('fault-msg-text');
   if (el) el.textContent = lastFaultMsg;
+}
+
+// ============================================================
+// CHARGEMENT MANUEL DES BÛCHES  (FEED_MANUAL / ReloadPrompt côté firmware)
+// ============================================================
+// Trois concepts « manuels » coexistent dans le firmware et ne doivent pas être
+// confondus ici :
+//   • mode de ventilation manuel  → les vitesses de ventilateur à la main
+//   • cmd/auto_insert_en          → coupe-circuit d'insertion de test (non exposé)
+//   • cmd/feed_mode (ce bloc)     → QUI met la bûche : la machine ou l'utilisateur
+// Dans ce mode la régulation, la courbe de ventilation et l'échéancier
+// d'insertion tournent exactement comme en automatique. Seul l'instant où une
+// bûche est due change de conséquence : rien ne bouge, le poêle sonne et
+// demande. C'est ReloadPrompt qui porte cette demande, côté firmware.
+
+// Délais repris de ReloadPrompt.h. Dupliqués côté app pour n'afficher qu'un
+// compte à rebours, jamais pour décider quoi que ce soit : l'abandon est décidé
+// par le poêle, l'app ne fait que l'annoncer.
+const RELOAD_REMINDER_MIN = 10;   // un rappel sonore toutes les 10 min
+const RELOAD_MAX_PROMPTS  = 4;    // la demande + 3 rappels
+const RELOAD_ABANDON_MIN  = 40;   // sans réponse, le poêle se met en refroidissement
+// Au-delà, un status/full à 1 Hz est considéré perdu et le poêle hors ligne.
+const STOVE_STALE_MS      = 15000;
+
+function setFeedMode(on) {
+  // Verrou optimiste : cmd/feed_mode n'est PAS retenu (le firmware garde le
+  // mode en NVS et le réémet dans status/full), donc l'écho met un cycle à
+  // revenir et la bascule retomberait visuellement sans ce verrou.
+  lockField('feed_mode');
+  applyFeedMode(on);
+  publish('cmd/feed_mode', on ? 'manual' : 'auto');
+  showToast(on ? 'Chargement manuel — le poêle vous demandera les bûches'
+               : 'Chargement automatique rétabli');
+}
+
+function applyFeedMode(on) {
+  feedManual = !!on;
+  const tog = document.getElementById('feed-mode-toggle');
+  if (tog) tog.checked = feedManual;
+  const note = document.getElementById('feed-mode-note');
+  if (note) note.textContent = feedManual
+    ? 'Le poêle sonnera et vous préviendra quand une bûche sera nécessaire.'
+    : '';
+  // Quitter le mode annule toute demande en cours : le firmware efface la
+  // demande sur changement de mode, mais il ne republiera reload_req qu'au
+  // prochain cycle et la bannière resterait affichée dans l'intervalle.
+  if (!feedManual && reloadPending) clearReloadPrompt();
+}
+
+function applyReloadReq(payload) {
+  let d;
+  try { d = JSON.parse(payload); } catch (e) { return; }
+  if (!d || typeof d !== 'object') return;
+
+  const pending = !!d.pending;
+  if (!pending) { clearReloadPrompt(); return; }
+
+  reloadPending   = true;
+  reloadPromptNum = parseInt(d.n) || 1;
+  // since_sec est daté de la PUBLICATION, pas de la réception. Sur un message
+  // retenu reçu à la connexion, l'écart peut valoir des heures — on reconstitue
+  // donc l'instant du lever et on laisse le minuteur local avancer seul.
+  const sinceSec  = Math.max(0, parseInt(d.since_sec) || 0);
+  reloadRaisedMs  = Date.now() - sinceSec * 1000;
+  reloadAckSentMs = 0;
+
+  renderReloadPrompt();
+  if (!reloadTicker) reloadTicker = setInterval(renderReloadPrompt, 1000);
+}
+
+function clearReloadPrompt() {
+  reloadPending   = false;
+  reloadPromptNum = 0;
+  reloadRaisedMs  = 0;
+  reloadAckSentMs = 0;
+  if (reloadTicker) { clearInterval(reloadTicker); reloadTicker = null; }
+  const b = document.getElementById('reload-banner');
+  if (b) b.classList.remove('show');
+  const btn = document.getElementById('reload-ack-btn');
+  if (btn) { btn.disabled = false; btn.textContent = "✓ C'est fait, la bûche est dedans"; }
+}
+
+function renderReloadPrompt() {
+  const banner = document.getElementById('reload-banner');
+  if (!banner) return;
+
+  // status/reload_req est retenu : le courtier le rejoue à chaque connexion,
+  // même si le poêle est débranché depuis. Sans ce test, ouvrir l'app sur un
+  // poêle éteint réclamerait une bûche pour un foyer froid depuis longtemps.
+  const stoveLive = stoveSeenMs > 0 && (Date.now() - stoveSeenMs) < STOVE_STALE_MS;
+  if (!reloadPending || !stoveLive) { banner.classList.remove('show'); return; }
+  banner.classList.add('show');
+
+  const elapsedMin = Math.floor((Date.now() - reloadRaisedMs) / 60000);
+  const since = document.getElementById('reload-since');
+  if (since) {
+    since.textContent = elapsedMin < 1 ? "demandé à l'instant"
+                      : elapsedMin === 1 ? 'demandé il y a 1 minute'
+                      : 'demandé il y a ' + elapsedMin + ' minutes';
+  }
+
+  // Le poêle se met en refroidissement RELOAD_ABANDON_MIN après la demande. Le
+  // dire explicitement : sans échéance affichée, « ajoutez une bûche » ressemble
+  // à un rappel que l'on peut remettre à plus tard, alors que l'ignorer éteint
+  // la flambée.
+  const el = document.getElementById('reload-deadline');
+  if (el) {
+    const left = RELOAD_ABANDON_MIN - elapsedMin;
+    if (left > 0) {
+      el.textContent = 'refroidissement dans ' + left + ' min';
+      el.classList.toggle('urgent', left <= RELOAD_REMINDER_MIN);
+    } else {
+      // Le poêle a normalement déjà effacé la demande et lancé le
+      // refroidissement ; on ne devine rien, on arrête juste de compter.
+      el.textContent = 'délai dépassé';
+      el.classList.add('urgent');
+    }
+  }
+
+  // Bouton neutralisé le temps que le poêle confirme. La confirmation arrive
+  // par reload_req (pending:false), pas par une réponse directe.
+  const btn = document.getElementById('reload-ack-btn');
+  if (btn && reloadAckSentMs) {
+    if (Date.now() - reloadAckSentMs < 8000) {
+      btn.disabled = true;
+      btn.textContent = 'Envoyé — en attente du poêle…';
+    } else {
+      // Le firmware REFUSE manual_ack s'il n'a aucune demande en cours, et
+      // refuse en silence. Rendre la main plutôt que de laisser un bouton mort.
+      reloadAckSentMs = 0;
+      btn.disabled = false;
+      btn.textContent = "✓ C'est fait, la bûche est dedans";
+      showToast('Le poêle n\'a pas confirmé — refermez la porte du foyer');
+    }
+  }
+}
+
+function manualFeedAck() {
+  // La voie normale est la porte : ReloadPrompt acquitte sur un cycle
+  // ouverture→fermeture de la porte principale, sans téléphone ni réseau. Ce
+  // bouton n'est qu'un second chemin, pour un chargement fait sans ouvrir la
+  // porte principale ou avec un capteur de porte défaillant.
+  if (!reloadPending) return;
+  reloadAckSentMs = Date.now();
+  publish('cmd/manual_ack', '1');
+  renderReloadPrompt();
 }
 
 // ============================================================
