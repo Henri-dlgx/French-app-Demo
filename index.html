@@ -338,17 +338,24 @@
       margin-bottom:10px;font-size:.76rem;line-height:1.35;
       border:1px solid rgba(255,255,255,.18)}
     .demo-bar b{display:block;font-size:.82rem;letter-spacing:.06em;margin-bottom:2px}
+    .demo-url{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+      font-size:.74rem;background:rgba(255,255,255,.14);border-radius:5px;
+      padding:1px 5px;white-space:nowrap}
   </style>
 </head>
 <body>
 <div class="wrap">
 
-  <!-- ── Bandeau de démonstration (absent de l'app de production) ── -->
+  <!-- ── Bandeau de démonstration (absent de l'app de production) ──
+       Le bandeau nomme l'URL de test, pas celle de production : c'est ici qu'on
+       vérifie une fonctionnalité, et renvoyer vers le domaine client depuis un
+       banc d'essai n'aide personne. -->
   <div class="demo-bar">
     <b>⚙️ BUILD DE DÉMONSTRATION</b>
-    Version de test — fonctionnalités en cours de validation. L'application
-    stable des clients reste sur app.connectwoodmood.com. Les réglages saisis
-    ici sont stockés séparément.
+    Banc d'essai servi par GitHub&nbsp;Pages —
+    <span class="demo-url">henri-dlgx.github.io/French-app-Demo</span>.
+    Fonctionnalités en cours de validation ; réglages stockés séparément de
+    l'application stable.
   </div>
 
   <!-- ── Header ── -->
