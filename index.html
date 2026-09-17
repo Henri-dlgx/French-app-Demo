@@ -1409,13 +1409,32 @@ function onMessage(topic, payloadBuf) {
   if (sub === 'status/fault_side') { const _s = payload.toLowerCase(); faultSide = (_s === 'right' || _s === 'r') ? 'r' : 'l'; if (faultActive) renderFaultPhase(); return; }
 
   if (sub === 'status/app_pw_change') {
+    let ok = false;
+    try { ok = !!JSON.parse(payload).ok; } catch(e) {}
+
+    // Le relais publie ce MEME accusé pour les deux flux : le changement
+    // demandé depuis cet écran (§12) et la réinitialisation déclenchée au poêle
+    // (§11 : appui long, point d'accès, confirmation par le bouton). Sans ce
+    // garde-fou, un accusé que nous n'avons pas demandé tombait dans la branche
+    // d'échec ci-dessous et affichait « Le changement de mot de passe a échoué »
+    // à un utilisateur qui n'avait rien tenté — et qui allait de surcroît le voir
+    // précisément au moment où quelqu'un venait de réussir une récupération.
+    if (!pwChangeNewValue) {
+      if (ok) {
+        // Le mot de passe du compte vient de changer sous nos pieds. MQTT ne
+        // réauthentifie pas en cours de session : CETTE connexion survit, mais
+        // la prochaine reconnexion échouera avec les identifiants enregistrés
+        // et ressemblera à un poêle en panne. Le dire franchement maintenant.
+        showToast('Mot de passe réinitialisé au poêle — reconnectez-vous avec celui de la carte');
+      }
+      return;
+    }
+
     clearTimeout(pwChangeTimeout);
     const btn    = document.getElementById('pw-change-btn');
     const status = document.getElementById('pw-change-status');
     btn.disabled = false;
-    let ok = false;
-    try { ok = !!JSON.parse(payload).ok; } catch(e) {}
-    if (ok && pwChangeNewValue) {
+    if (ok) {
       cfg.pass = pwChangeNewValue;
       localStorage.setItem(LS, JSON.stringify(cfg));
       document.getElementById('cfg-pass').value = cfg.pass;
