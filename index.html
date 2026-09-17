@@ -474,12 +474,15 @@
         <button class="btn btn-brown"  onclick="forceCloseRetry()">↻ Réessayer</button>
         <button class="btn btn-cancel" onclick="forceCloseCancel()">Abandonner</button>
       </div>
+      <div class="joint-msg" style="margin:10px 0 0">Si le poêle se bloque immédiatement à chaque tentative alors que rien ne gêne, le capteur de blocage est probablement coincé. Vérifiez les deux trappes à l'œil, puis :</div>
+      <button class="btn btn-cancel btn-full" style="margin-top:6px" onclick="forceCloseOverride()">Les trappes sont fermées — débloquer</button>
     </div>
     <!-- Vue 3 : fermeture interrompue (redémarrage en plein milieu) -->
     <div id="fclose-incomplete" style="display:none">
       <div class="joint-title">⚠️ Trappe probablement ouverte</div>
       <div class="joint-msg">Une fermeture forcée a été interrompue. Par sécurité, le poêle refuse de charger des bûches tant qu'une fermeture forcée n'a pas abouti.</div>
       <button class="btn btn-resolve btn-full" onclick="forceClose(true)">⇲ Relancer la fermeture</button>
+      <button class="btn btn-cancel btn-full" style="margin-top:8px" onclick="forceCloseOverride()">Les trappes sont fermées — débloquer</button>
     </div>
   </div>
 
@@ -2590,6 +2593,22 @@ function forceCloseRetry() {
   }
   publish('cmd/force_close', 'retry');
   showToast('Nouvelle tentative…');
+}
+
+// Dernier recours : le poêle ne mesure pas la fermeture des trappes (il n'y a pas
+// de capteur de position), il ne fait que retenir qu'une fermeture n'a pas abouti.
+// Si le capteur de blocage est coincé, aucune fermeture ne peut aboutir et le poêle
+// refuserait de se recharger indéfiniment. Ce bouton lève le verrou sur la parole
+// de l'utilisateur — il ne déplace rien.
+function forceCloseOverride() {
+  if (!confirm(
+        'Débloquer le chargement ?\n\n'
+      + 'Vérifiez D\'ABORD, à l\'œil, que les deux trappes sont bien fermées.\n\n'
+      + 'Le poêle ne peut pas le vérifier lui-même : il vous croira sur parole et '
+      + 'recommencera à charger des bûches. Si une trappe est en réalité ouverte, '
+      + 'une bûche tombera dans un foyer ouvert.\n\nConfirmer ?')) return;
+  publish('cmd/force_close', 'override');
+  showToast('Verrou levé — chargement réactivé');
 }
 
 function forceCloseCancel() {
