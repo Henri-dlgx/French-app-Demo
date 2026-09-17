@@ -98,6 +98,11 @@
     .joint-btn-row .btn{flex:1}
     .btn-cancel{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.4)}
 
+    /* ── Fermeture forcée des trappes — même emplacement que la bannière joint ── */
+    #fclose-banner{display:none;background:#7a2d12;color:#fff;border-radius:18px;
+      padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    #fclose-banner.show{display:block}
+
     /* ── Buttons ── */
     .btn{border:none;border-radius:10px;font-size:.9rem;font-weight:600;
       cursor:pointer;padding:10px 14px;transition:filter .15s;flex:1}
@@ -446,6 +451,35 @@
       <div class="joint-side-badge">Côté <span id="joint-side-lbl">—</span></div>
       <div class="joint-msg">La trappe est ouverte et la porte déverrouillée. Remplacez le joint, refermez la porte de chargement, puis appuyez sur Terminé.</div>
       <button class="btn btn-resolve btn-full" onclick="jointDone()">✓ J'ai terminé</button>
+    </div>
+  </div>
+
+  <!-- ── Bannière « Fermeture forcée » ──
+       Entièrement pilotée par le champ « fclose » de status/full : le firmware est
+       seul propriétaire de l'état, l'app ne fait que l'afficher. Elle réapparaît
+       donc telle quelle après un rechargement de l'app ou une reconnexion. -->
+  <div id="fclose-banner">
+    <!-- Vue 1 : fermeture en cours -->
+    <div id="fclose-progress" style="display:none">
+      <div class="joint-title">⇲ Fermeture forcée en cours</div>
+      <div class="joint-side-badge">Trappe <span id="fclose-side-lbl">—</span></div>
+      <div class="joint-msg">Le poêle referme les trappes l'une après l'autre. N'ouvrez aucune porte tant que ce n'est pas terminé.</div>
+    </div>
+    <!-- Vue 2 : blocage -->
+    <div id="fclose-blocked" style="display:none">
+      <div class="joint-title">⛔ Trappe bloquée</div>
+      <div class="joint-side-badge">Trappe <span id="fclose-blocked-lbl">—</span></div>
+      <div class="joint-msg">Quelque chose empêche la trappe de se fermer — le plus souvent une bûche en travers. Dégagez-la, refermez les portes, puis appuyez sur Réessayer.</div>
+      <div class="joint-btn-row">
+        <button class="btn btn-brown"  onclick="forceCloseRetry()">↻ Réessayer</button>
+        <button class="btn btn-cancel" onclick="forceCloseCancel()">Abandonner</button>
+      </div>
+    </div>
+    <!-- Vue 3 : fermeture interrompue (redémarrage en plein milieu) -->
+    <div id="fclose-incomplete" style="display:none">
+      <div class="joint-title">⚠️ Trappe probablement ouverte</div>
+      <div class="joint-msg">Une fermeture forcée a été interrompue. Par sécurité, le poêle refuse de charger des bûches tant qu'une fermeture forcée n'a pas abouti.</div>
+      <button class="btn btn-resolve btn-full" onclick="forceClose(true)">⇲ Relancer la fermeture</button>
     </div>
   </div>
 
@@ -804,6 +838,15 @@
 
       <div class="divider"></div>
 
+      <!-- Dépannage -->
+      <div>
+        <div class="settings-section">Dépannage</div>
+        <button class="btn btn-red btn-full" id="fclose-btn" onclick="forceClose()">⇲ Fermeture forcée des trappes</button>
+        <p style="font-size:.72rem;color:#aaa;margin-top:8px">Referme les deux trappes, la gauche puis la droite (environ 40 s). À n'utiliser que si le poêle a redémarré avec une trappe restée ouverte. Toutes les portes doivent être fermées ; le poêle surveille les blocages pendant toute la fermeture et s'arrête s'il rencontre un obstacle.</p>
+      </div>
+
+      <div class="divider"></div>
+
       <!-- Redémarrage ESP -->
       <div>
         <button class="btn btn-red btn-full" onclick="resetESP()">↺ Redémarrer l'ESP32</button>
@@ -980,6 +1023,9 @@ let reloadRaisedMs   = 0;
 let reloadAckSentMs  = 0;
 let reloadTicker     = null;
 let stoveSeenMs      = 0;
+let doorMainOpen     = false;  // status/full door_main — l'actionneur de trappe est verrouillé porte ouverte
+let doorLoadOpen     = false;  // status/full door_load
+let fcloseState      = 0;      // status/full fclose — voir applyForceClose()
 let client           = null;
 let prefix           = '';
 let roomTemp         = 18;   // T1 par défaut (= consigne 275 °C côté poêle)
@@ -1511,6 +1557,13 @@ function applyFull(d) {
     bleRoomTemp   = bleRoomTempOk ? val : null;
     updateBleRoomTemp();
   }
+  // État des portes : le firmware les publie depuis toujours, mais l'app les
+  // ignorait. La fermeture forcée en a besoin — l'actionneur de trappe est coupé
+  // par les contacts de porte, donc lancer une fermeture porte ouverte ne
+  // déplacerait rien tout en faisant croire au firmware que c'est fermé.
+  if (d.door_main !== undefined) doorMainOpen = !!d.door_main;
+  if (d.door_load !== undefined) doorLoadOpen = !!d.door_load;
+  if (d.fclose    !== undefined) applyForceClose(parseInt(d.fclose) || 0);
   if (d.log_l !== undefined && !ignoreEcho('log_l', parseInt(d.log_l) || 0)) {
     logL = parseInt(d.log_l) || 0;
     renderBars('left', logL);
@@ -2486,6 +2539,94 @@ function showJointBanner() {
 
 function closeJointBanner() {
   document.getElementById('joint-banner').classList.remove('show');
+}
+
+// ============================================================
+// FERMETURE FORCÉE DES TRAPPES  (dépannage)
+// ============================================================
+// Referme les deux trappes, gauche puis droite. Sert au cas que rien d'autre ne
+// couvre : le poêle a redémarré avec une trappe ouverte. Le firmware surveille le
+// bouton de blocage pendant toute la course et s'arrête sur obstacle.
+//
+// L'app ne garde aucun état : tout vient du champ « fclose » de status/full, donc
+// un rechargement de page ou une reconnexion retrouve l'écran exact.
+const FCLOSE_IDLE = 0, FCLOSE_LEFT = 1, FCLOSE_RIGHT = 2,
+      FCLOSE_BLOCKED_L = 3, FCLOSE_BLOCKED_R = 4, FCLOSE_INCOMPLETE = 5;
+
+function forceClose(fromBanner = false) {
+  // Garde-fous en « échec fermé », comme changerJoint() : on préfère refuser à
+  // tort que lancer un actionneur alors que le poêle n'est pas en état.
+  if (!(stoveSeenMs > 0 && (Date.now() - stoveSeenMs) < STOVE_STALE_MS)) {
+    alert('Le poêle ne répond pas pour le moment. Attendez d\'être connecté avant de lancer une fermeture forcée.');
+    return;
+  }
+  if (systemState === 'fault') {
+    alert('Le poêle est en défaut. Utilisez « Valider le défaut » : cette procédure referme déjà la trappe et remet les ventilateurs en route.');
+    return;
+  }
+  if (jointServiceActive) {
+    alert('Un changement de joint est en cours. Terminez-le d\'abord.');
+    return;
+  }
+  if (doorMainOpen || doorLoadOpen) {
+    alert('Une porte est ouverte. La trappe est verrouillée tant qu\'une porte est ouverte : refermez tout, puis réessayez.');
+    return;
+  }
+  if (!fromBanner && !confirm(
+        'Fermeture forcée des trappes\n\n'
+      + 'Le poêle va refermer la trappe gauche, puis la droite — environ 40 secondes en tout. '
+      + 'Restez à l\'écart et n\'ouvrez aucune porte pendant l\'opération.\n\n'
+      + 'À n\'utiliser qu\'en dépannage, si une trappe est restée ouverte.\n\nContinuer ?')) {
+    return;
+  }
+  publish('cmd/force_close', '1');
+  showToast('Fermeture forcée lancée…');
+}
+
+function forceCloseRetry() {
+  if (doorMainOpen || doorLoadOpen) {
+    alert('Refermez toutes les portes avant de réessayer : la trappe ne peut pas bouger porte ouverte.');
+    return;
+  }
+  publish('cmd/force_close', 'retry');
+  showToast('Nouvelle tentative…');
+}
+
+function forceCloseCancel() {
+  if (!confirm('Abandonner la fermeture ?\n\nLa trappe restera considérée comme ouverte et le poêle refusera de charger des bûches tant qu\'une fermeture forcée n\'aura pas abouti.')) return;
+  publish('cmd/force_close', '0');
+  showToast('Fermeture abandonnée');
+}
+
+// Reflet pur de l'état firmware — aucune décision prise ici.
+function applyForceClose(code) {
+  if (code === fcloseState) return;   // évite de repeindre à chaque seconde
+  const wasRunning = (fcloseState !== FCLOSE_IDLE);
+  fcloseState = code;
+
+  const banner   = document.getElementById('fclose-banner');
+  const progress = document.getElementById('fclose-progress');
+  const blocked  = document.getElementById('fclose-blocked');
+  const incompl  = document.getElementById('fclose-incomplete');
+  const btn      = document.getElementById('fclose-btn');
+  const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+
+  const running     = (code === FCLOSE_LEFT || code === FCLOSE_RIGHT);
+  const isBlocked   = (code === FCLOSE_BLOCKED_L || code === FCLOSE_BLOCKED_R);
+  const isIncomplete= (code === FCLOSE_INCOMPLETE);
+
+  show(progress, running);
+  show(blocked,  isBlocked);
+  show(incompl,  isIncomplete);
+  banner.classList.toggle('show', running || isBlocked || isIncomplete);
+  if (btn) btn.disabled = (running || isBlocked);
+
+  // mapSide() parce que l'app peut inverser gauche/droite par rapport au firmware.
+  const sideTxt = (isRight) => (mapSide(isRight ? 'r' : 'l') === 'r') ? 'droite' : 'gauche';
+  if (running)   document.getElementById('fclose-side-lbl').textContent    = sideTxt(code === FCLOSE_RIGHT);
+  if (isBlocked) document.getElementById('fclose-blocked-lbl').textContent = sideTxt(code === FCLOSE_BLOCKED_R);
+
+  if (code === FCLOSE_IDLE && wasRunning) showToast('Trappes refermées');
 }
 
 // ============================================================
