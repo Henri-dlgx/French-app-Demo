@@ -594,27 +594,27 @@
     <div class="settings-body" id="options-body">
       <div>
         <!-- ── Rapport quotidien des bûches ──
-             DÉSACTIVÉ (juil. 2026) : le rapport est maintenant envoyé par le
-             poêle via ntfy, à heure fixe (NTFY_DAILY_HOUR dans le firmware,
-             20:00). Ce réglage d'heure ne pilotait que l'ancienne notification
-             de l'application — le laisser affiché laisserait croire qu'il agit
-             encore sur quelque chose. À réactiver si l'heure devient
-             configurable par MQTT.
+             Envoyé par le poêle via ntfy. Le réglage vit dans le poêle (NVS) :
+             on l'envoie par cmd/daily_report et on affiche ce qu'il renvoie sur
+             status/daily_report (retenu). Bloc masqué tant que ce topic n'est
+             pas arrivé — un firmware plus ancien ne le publie pas, et
+             l'afficher laisserait croire que le réglage agit. -->
+        <div id="daily-report-block" style="display:none">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <span style="font-size:.85rem;font-weight:600;color:#5a3015">Rapport quotidien des bûches</span>
           <label class="tgl"><input type="checkbox" id="tog-daily-report" onchange="setDailyReportEnabled(this.checked)"><span class="tgl-sl"></span></label>
         </div>
-        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Recevez chaque jour, à l'heure choisie, un récapitulatif des bûches restantes et de la température — envoyé uniquement lorsque le poêle est en marche (automatique).</div>
+        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Recevez chaque jour dans l'application ntfy, à l'heure choisie, le nombre de bûches restantes et le temps de chauffe estimé — envoyé uniquement lorsque le poêle est en marche (automatique).</div>
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:.82rem;font-weight:600;color:#5a3015">Heure d'envoi</span>
           <input type="time" id="daily-report-time" value="20:00" onchange="setDailyReportTime(this.value)"
                  style="flex:none;padding:6px 8px;border:1px solid #d8c4b0;border-radius:8px;font-size:.9rem;color:#5a3015;background:#fff">
         </div>
         <div id="daily-report-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
-        ── fin du bloc désactivé ── -->
+        <div class="divider" style="margin:16px 0 12px"></div>
+        </div>
 
         <!-- ── Programmation de température ── -->
-        <div class="divider" style="margin:16px 0 12px"></div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <span style="font-size:.85rem;font-weight:600;color:#5a3015">Activer la programmation</span>
           <label class="tgl"><input type="checkbox" id="tog-sched-enable" onchange="setSchedEnabled(this.checked)"><span class="tgl-sl"></span></label>
@@ -990,7 +990,6 @@ const LS_SCHED    = 'woodmood_schedule'       + LS_NS;   // ancien format (table
 const LS_SCHED_V2 = 'woodmood_schedule_v2'    + LS_NS;   // {week:[12], weekend:[12]}
 const LS_SCHED_EN = 'woodmood_sched_enabled'  + LS_NS;
 const LS_PUSH     = 'woodmood_push_enabled'   + LS_NS;
-const LS_DAILY    = 'woodmood_daily_report'   + LS_NS;   // {enabled, time:'HH:MM', lastSent:'YYYY-MM-DD'}
 const LS_ROOM     = 'woodmood_room_temp'      + LS_NS;
 
 // Broker is the same for every device — only the serial + password differ per user.
@@ -1079,10 +1078,9 @@ const _pushThrottle  = {};
 let pwChangeNewValue = null;
 let pwChangeTimeout  = null;
 
-// Rapport quotidien des bûches — notification locale envoyée une fois par jour
-// à l'heure choisie, tant que l'app tourne et que le poêle est en marche.
-let dailyReport      = { enabled: false, time: '20:00', lastSent: '' };
-let dailyReportTimer = null;
+// Rapport quotidien des bûches — envoyé par le poêle (ntfy). Copie locale de ce
+// que le poêle a renvoyé sur status/daily_report.
+let dailyReport      = { enabled: true, time: '20:00' };
 
 // Suivi d'état dérivé
 let stoveTemp          = null;   // dernière température du poêle (°C) via MQTT
@@ -1140,7 +1138,6 @@ function ignoreEcho(f, incoming) {
 window.addEventListener('load', () => {
   loadSettings();
   initSchedule();
-  // initDailyReport();  // désactivé — le rapport quotidien vient du poêle (ntfy)
   // Restaure la dernière température souhaitée depuis localStorage
   const savedRoom = parseInt(localStorage.getItem(LS_ROOM));
   if (savedRoom >= 18 && savedRoom <= 23) roomTemp = savedRoom;
@@ -1509,6 +1506,7 @@ function onMessage(topic, payloadBuf) {
     updateBleRoomTemp(); return;
   }
   if (sub === 'status/ntfy_link') { setNtfyLink(payload); return; }
+  if (sub === 'status/daily_report') { applyDailyReport(payload); return; }
   // Demande de rechargement (chargement manuel) — topic RETENU, publié par le
   // firmware uniquement sur changement d'état ou de numéro de rappel.
   if (sub === 'status/reload_req') { applyReloadReq(payload); return; }
@@ -2753,12 +2751,6 @@ function toggleOptions() {
   document.getElementById('options-arrow').classList.toggle('open', optionsOpen);
   if (optionsOpen) {
     document.getElementById('tog-sched-enable').checked = schedEnabled;
-    // Bloc « rapport quotidien » désactivé (le poêle l'envoie via ntfy) : ni
-    // les éléments ni updateDailyReportStatus() n'existent plus. Les laisser
-    // ici plantait l'ouverture du panneau AVANT le dessin de la courbe.
-    // document.getElementById('tog-daily-report').checked = dailyReport.enabled;
-    // document.getElementById('daily-report-time').value  = dailyReport.time;
-    // updateDailyReportStatus();
     schedEditMode = isWeekendDay() ? 'weekend' : 'week';   // ouvrir sur la courbe du jour
     updateSchedTabs();
     renderScheduleSVG();
@@ -3073,121 +3065,53 @@ function checkBothMagazinesEmpty() {
 */
 
 // ============================================================
-// RAPPORT QUOTIDIEN DES BÛCHES — DÉSACTIVÉ (juil. 2026)
+// RAPPORT QUOTIDIEN DES BÛCHES — piloté par le poêle
 // ============================================================
-// Le rapport est maintenant envoyé par le poêle via ntfy, une fois par jour à
-// NTFY_DAILY_HOUR (20:00) et uniquement s'il tourne en automatique — mêmes
-// conditions qu'ici, même texte. L'heure n'est plus réglable depuis l'app :
-// elle est fixée dans le firmware. Pour la rendre réglable il faudrait un
-// nouveau sujet MQTT (cmd/daily_time) + une sauvegarde NVS côté poêle.
-/*
-function initDailyReport() {
-  const saved = JSON.parse(localStorage.getItem(LS_DAILY) || 'null');
-  if (saved && typeof saved === 'object') {
-    dailyReport.enabled  = !!saved.enabled;
-    if (/^\d{2}:\d{2}$/.test(saved.time || '')) dailyReport.time = saved.time;
-    dailyReport.lastSent = saved.lastSent || '';
-  }
+// Le poêle envoie le rapport via ntfy une fois par jour à l'heure choisie, et
+// uniquement s'il tourne en automatique. L'app ne fait que régler : cmd/daily_report
+// ("1,HH:MM" / "0,HH:MM", non retenu — le poêle garde le réglage en NVS) et
+// affiche l'écho retenu status/daily_report {en, t}. L'ancienne version locale
+// (notification de l'app + relais) a été retirée en juil. 2026 ; voir l'historique git.
+
+function applyDailyReport(payload) {
+  let d;
+  try { d = JSON.parse(payload); } catch (e) { return; }
+  if (!d || typeof d !== 'object') return;
+  dailyReport.enabled = !!d.en;
+  if (/^\d{2}:\d{2}$/.test(d.t || '')) dailyReport.time = d.t;
+  const block = document.getElementById('daily-report-block');
+  if (block) block.style.display = '';
   const tog = document.getElementById('tog-daily-report');
   const inp = document.getElementById('daily-report-time');
   if (tog) tog.checked = dailyReport.enabled;
-  if (inp) inp.value   = dailyReport.time;
+  if (inp && document.activeElement !== inp) inp.value = dailyReport.time;
   updateDailyReportStatus();
-  // Vérifie chaque minute — l'intervalle survit à la mise en veille de l'onglet
-  // et rattrape l'heure exacte tant que l'app reste chargée.
-  if (dailyReportTimer) clearInterval(dailyReportTimer);
-  dailyReportTimer = setInterval(checkDailyReport, 30_000);
 }
 
-function persistDailyReport() {
-  localStorage.setItem(LS_DAILY, JSON.stringify(dailyReport));
+function sendDailyReport() {
+  publish('cmd/daily_report', (dailyReport.enabled ? '1' : '0') + ',' + dailyReport.time);
 }
 
-async function setDailyReportEnabled(on) {
+function setDailyReportEnabled(on) {
   dailyReport.enabled = on;
-  // Nouvelle activation : autorise un envoi aujourd'hui même si un précédent
-  // rapport avait déjà été marqué comme envoyé.
-  if (on) dailyReport.lastSent = '';
-  persistDailyReport();
   updateDailyReportStatus();
-  // La livraison app fermée passe par le relais, qui a besoin d'un abonnement
-  // push. À l'activation, on s'assure que les notifications push sont actives
-  // (demande la permission + abonne) puis on enregistre l'horaire côté relais.
-  if (on && !_pushSub) {
-    await enablePushNotifications();
-  }
-  syncDailyToRelay();
+  sendDailyReport();
 }
 
 function setDailyReportTime(t) {
   if (!/^\d{2}:\d{2}$/.test(t)) return;
   dailyReport.time = t;
-  dailyReport.lastSent = '';   // change d'heure → l'envoi du jour redevient possible
-  persistDailyReport();
   updateDailyReportStatus();
-  syncDailyToRelay();
-}
-
-// Enregistre l'horaire du rapport quotidien sur le relais (livraison app fermée).
-// Sans abonnement push (_pushSub), le relais n'a rien à qui envoyer → on saute.
-function syncDailyToRelay() {
-  if (!_pushSub) return;
-  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
-  fetch(`${RELAY_URL}/daily`, {
-    method: 'POST', headers: RELAY_HEADERS,
-    body: JSON.stringify({
-      endpoint: _pushSub.endpoint,
-      enabled:  dailyReport.enabled,
-      time:     dailyReport.time,
-      tz
-    })
-  }).catch(() => {});
+  sendDailyReport();
 }
 
 function updateDailyReportStatus() {
   const el = document.getElementById('daily-report-status');
   if (!el) return;
-  if (!dailyReport.enabled) { el.textContent = ''; return; }
-  el.textContent = 'Rapport prévu chaque jour à ' + dailyReport.time
-                 + (dailyReport.lastSent === todayStr() ? ' · envoyé aujourd’hui ✓' : '');
+  el.textContent = dailyReport.enabled
+    ? 'Rapport envoyé chaque jour à ' + dailyReport.time + ' via ntfy'
+    : '';
 }
-
-function todayStr() {
-  const n = new Date();
-  return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0')
-       + '-' + String(n.getDate()).padStart(2, '0');
-}
-
-function checkDailyReport() {
-  if (!dailyReport.enabled) return;
-  const now = new Date();
-  const cur = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-  if (cur !== dailyReport.time) return;
-  if (dailyReport.lastSent === todayStr()) return;
-  // Condition : le poêle doit être en marche (automatique) — pas démarrage,
-  // refroidissement, veille ni défaut. Si ce n'est pas le cas à l'heure prévue,
-  // on ne marque rien : un nouvel essai est possible tant que la minute dure.
-  if (systemState !== 'auto') return;
-
-  dailyReport.lastSent = todayStr();
-  persistDailyReport();
-  const total = logL + logR;
-  triggerPush('daily-report', '⏱️ ' + formatTimeLeft(total) + ' restant',
-    'G : ' + logL + ' · R : ' + logR);
-  updateDailyReportStatus();
-}
-
-// 40 min de combustion estimée par bûche (les deux côtés confondus).
-function formatTimeLeft(logs) {
-  const mins = logs * 40;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return m + ' min';
-  if (m === 0) return h + ' h';
-  return h + ' h ' + m + ' min';
-}
-*/
-// ── fin du bloc « rapport quotidien » désactivé ──
 
 // ============================================================
 // ABONNEMENT PUSH (relais + service worker) — DÉSACTIVÉ (juil. 2026)
