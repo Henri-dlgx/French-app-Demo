@@ -80,12 +80,7 @@
     .reload-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
     .reload-badge{display:inline-block;background:rgba(255,255,255,.2);border-radius:8px;
       padding:3px 10px;font-size:.8rem;font-weight:600;letter-spacing:.04em}
-    /* Le compte à rebours d'abandon vire au rouge dans les 10 dernières minutes :
-       passé ce délai le poêle se met en refroidissement tout seul. */
-    .reload-badge.urgent{background:rgba(192,57,43,.85)}
-    .reload-msg{font-size:.84rem;opacity:.85;margin-bottom:12px}
-    .btn-reload-ack{background:#27ae60;font-size:1rem;font-weight:700}
-    .btn-reload-ack:disabled{background:rgba(255,255,255,.2);cursor:default}
+    .reload-msg{font-size:.84rem;opacity:.85}
 
     /* ── Joint (gasket) service banner — same slot as the fault banner ── */
     #joint-banner{display:none;background:#5a3410;color:#fff;border-radius:18px;
@@ -503,21 +498,18 @@
   <!-- ── Bannière « Ajoutez une bûche » — chargement manuel ──
        Pilotée uniquement par le topic RETENU status/reload_req. Le firmware
        l'efface lui-même sur défaut, refroidissement, veille et changement de
-       mode, donc l'app n'a aucune règle de priorité à dupliquer ici. -->
+       mode, donc l'app n'a aucune règle de priorité à dupliquer ici.
+       Purement informative : pas de bouton de confirmation, c'est la fermeture
+       de la porte principale qui acquitte la demande côté poêle. -->
   <div id="reload-banner">
     <div class="reload-title">🪵 Ajoutez une bûche</div>
     <div class="reload-badges">
       <span class="reload-badge" id="reload-since">à l'instant</span>
-      <span class="reload-badge" id="reload-deadline">—</span>
     </div>
     <div class="reload-msg">
-      Chargement manuel : ouvrez la porte du foyer, posez une bûche, refermez.
-      Le poêle voit la porte se refermer et reprend seul — le bouton ci-dessous
-      n'est utile que si vous avez déjà chargé sans ouvrir la porte principale.
+      Le poêle attend une bûche : ouvrez la porte du foyer, posez-la, refermez.
+      Le poêle voit la porte se refermer et reprend seul.
     </div>
-    <button class="btn btn-reload-ack btn-full" id="reload-ack-btn" onclick="manualFeedAck()">
-      ✓ C'est fait, la bûche est dedans
-    </button>
   </div>
 
   <!-- ── Temperature ── -->
@@ -1038,7 +1030,6 @@ let feedManual       = false;
 let reloadPending    = false;
 let reloadPromptNum  = 0;
 let reloadRaisedMs   = 0;
-let reloadAckSentMs  = 0;
 let reloadTicker     = null;
 let stoveSeenMs      = 0;
 let doorMainOpen     = false;  // status/full door_main — l'actionneur de trappe est verrouillé porte ouverte
@@ -1960,12 +1951,6 @@ function setFaultMsg(msg) {
 // bûche est due change de conséquence : rien ne bouge, le poêle sonne et
 // demande. C'est ReloadPrompt qui porte cette demande, côté firmware.
 
-// Délais repris de ReloadPrompt.h. Dupliqués côté app pour n'afficher qu'un
-// compte à rebours, jamais pour décider quoi que ce soit : l'abandon est décidé
-// par le poêle, l'app ne fait que l'annoncer.
-const RELOAD_REMINDER_MIN = 10;   // un rappel sonore toutes les 10 min
-const RELOAD_MAX_PROMPTS  = 4;    // la demande + 3 rappels
-const RELOAD_ABANDON_MIN  = 40;   // sans réponse, le poêle se met en refroidissement
 // Au-delà, un status/full à 1 Hz est considéré perdu et le poêle hors ligne.
 const STOVE_STALE_MS      = 15000;
 
@@ -2009,7 +1994,6 @@ function applyReloadReq(payload) {
   // donc l'instant du lever et on laisse le minuteur local avancer seul.
   const sinceSec  = Math.max(0, parseInt(d.since_sec) || 0);
   reloadRaisedMs  = Date.now() - sinceSec * 1000;
-  reloadAckSentMs = 0;
 
   renderReloadPrompt();
   if (!reloadTicker) reloadTicker = setInterval(renderReloadPrompt, 1000);
@@ -2019,12 +2003,9 @@ function clearReloadPrompt() {
   reloadPending   = false;
   reloadPromptNum = 0;
   reloadRaisedMs  = 0;
-  reloadAckSentMs = 0;
   if (reloadTicker) { clearInterval(reloadTicker); reloadTicker = null; }
   const b = document.getElementById('reload-banner');
   if (b) b.classList.remove('show');
-  const btn = document.getElementById('reload-ack-btn');
-  if (btn) { btn.disabled = false; btn.textContent = "✓ C'est fait, la bûche est dedans"; }
 }
 
 function renderReloadPrompt() {
@@ -2045,52 +2026,6 @@ function renderReloadPrompt() {
                       : elapsedMin === 1 ? 'demandé il y a 1 minute'
                       : 'demandé il y a ' + elapsedMin + ' minutes';
   }
-
-  // Le poêle se met en refroidissement RELOAD_ABANDON_MIN après la demande. Le
-  // dire explicitement : sans échéance affichée, « ajoutez une bûche » ressemble
-  // à un rappel que l'on peut remettre à plus tard, alors que l'ignorer éteint
-  // la flambée.
-  const el = document.getElementById('reload-deadline');
-  if (el) {
-    const left = RELOAD_ABANDON_MIN - elapsedMin;
-    if (left > 0) {
-      el.textContent = 'refroidissement dans ' + left + ' min';
-      el.classList.toggle('urgent', left <= RELOAD_REMINDER_MIN);
-    } else {
-      // Le poêle a normalement déjà effacé la demande et lancé le
-      // refroidissement ; on ne devine rien, on arrête juste de compter.
-      el.textContent = 'délai dépassé';
-      el.classList.add('urgent');
-    }
-  }
-
-  // Bouton neutralisé le temps que le poêle confirme. La confirmation arrive
-  // par reload_req (pending:false), pas par une réponse directe.
-  const btn = document.getElementById('reload-ack-btn');
-  if (btn && reloadAckSentMs) {
-    if (Date.now() - reloadAckSentMs < 8000) {
-      btn.disabled = true;
-      btn.textContent = 'Envoyé — en attente du poêle…';
-    } else {
-      // Le firmware REFUSE manual_ack s'il n'a aucune demande en cours, et
-      // refuse en silence. Rendre la main plutôt que de laisser un bouton mort.
-      reloadAckSentMs = 0;
-      btn.disabled = false;
-      btn.textContent = "✓ C'est fait, la bûche est dedans";
-      showToast('Le poêle n\'a pas confirmé — refermez la porte du foyer');
-    }
-  }
-}
-
-function manualFeedAck() {
-  // La voie normale est la porte : ReloadPrompt acquitte sur un cycle
-  // ouverture→fermeture de la porte principale, sans téléphone ni réseau. Ce
-  // bouton n'est qu'un second chemin, pour un chargement fait sans ouvrir la
-  // porte principale ou avec un capteur de porte défaillant.
-  if (!reloadPending) return;
-  reloadAckSentMs = Date.now();
-  publish('cmd/manual_ack', '1');
-  renderReloadPrompt();
 }
 
 // ============================================================
