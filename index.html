@@ -616,7 +616,7 @@
           <span style="font-size:.85rem;font-weight:600;color:#5a3015">Rapport quotidien des bûches</span>
           <label class="tgl"><input type="checkbox" id="tog-daily-report" onchange="setDailyReportEnabled(this.checked)"><span class="tgl-sl"></span></label>
         </div>
-        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Recevez chaque jour dans l'application ntfy, à l'heure choisie, le nombre de bûches restantes et le temps de chauffe estimé — envoyé uniquement lorsque le poêle est en marche (automatique).</div>
+        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Recevez chaque jour dans l'application ntfy, à l'heure choisie, le nombre de bûches restantes et le temps de chauffe estimé — envoyé uniquement lorsque le poêle est en marche (automatique), et pas en chargement manuel.</div>
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:.82rem;font-weight:600;color:#5a3015">Heure d'envoi</span>
           <input type="time" id="daily-report-time" value="20:00" onchange="setDailyReportTime(this.value)"
@@ -2032,6 +2032,7 @@ function applyFeedMode(on) {
   // demande sur changement de mode, mais il ne republiera reload_req qu'au
   // prochain cycle et la bannière resterait affichée dans l'intervalle.
   if (!feedManual && reloadPending) clearReloadPrompt();
+  updateDailyReportStatus();   // le poêle n'envoie pas le rapport en manuel
 }
 
 function applyReloadReq(payload) {
@@ -3121,9 +3122,12 @@ function setDailyReportTime(t) {
 function updateDailyReportStatus() {
   const el = document.getElementById('daily-report-status');
   if (!el) return;
-  el.textContent = dailyReport.enabled
-    ? 'Rapport envoyé chaque jour à ' + dailyReport.time + ' via ntfy'
-    : '';
+  // En chargement manuel le poêle n'envoie pas le rapport : il compte les
+  // bûches des cassettes, vides par définition dans ce mode. Le réglage est
+  // conservé et reprend dès le retour en automatique.
+  el.textContent = !dailyReport.enabled ? ''
+    : feedManual ? 'En pause pendant le chargement manuel'
+    : 'Rapport envoyé chaque jour à ' + dailyReport.time + ' via ntfy';
 }
 
 // ============================================================
