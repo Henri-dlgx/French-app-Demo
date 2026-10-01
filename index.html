@@ -303,6 +303,17 @@
     .set-fold>summary::after{content:'▼';font-size:.7rem;color:#8B4513;transition:transform .2s}
     .set-fold[open]>summary::after{transform:rotate(180deg)}
     .set-fold-body{padding:0 12px 12px}
+    /* ── Notifications ntfy : parcours téléphone / ordinateur ── */
+    .ntfy-panel{display:none;flex-direction:column;gap:8px;background:#f9f5f1;
+      border-radius:10px;padding:12px}
+    .ntfy-panel.show{display:flex}
+    .ntfy-step{display:flex;gap:8px;align-items:flex-start;font-size:.8rem;color:#5a3015;line-height:1.4}
+    .ntfy-step>b{flex:none;width:20px;height:20px;border-radius:50%;background:#8B4513;color:#fff;
+      font-size:.72rem;display:flex;align-items:center;justify-content:center;margin-top:1px}
+    .ntfy-box{font-size:.78rem;font-family:monospace;word-break:break-all;background:#fff;
+      border:1px solid #e0d2c2;border-radius:8px;padding:8px;color:#5a3015;text-align:center}
+    .ntfy-warn{font-size:.76rem;color:#8a5a00;background:#fdf3dc;border-radius:8px;padding:8px;line-height:1.4}
+    .ntfy-help{font-size:.75rem;color:#8B4513;text-align:center}
     .settings-section.danger{color:#dc3545}
     .danger-zone{border:1px solid #f1b0b7;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px}
     .btn-outline-red{background:#fff;color:#dc3545;border:1px solid #dc3545}
@@ -321,7 +332,7 @@
     /* ── Programmation de température ── */
     .sched-pt{cursor:ns-resize}
     .sched-badge{font-size:.62rem;font-weight:700;color:#8B4513;background:rgba(139,69,19,.1);
-      border-radius:20px;padding:1px 7px;margin-top:3px;display:none;letter-spacing:.02em}
+      border-radius:20px;padding:1px 7px;margin-top:3px;display:none;letter-spacing:.02em;white-space:nowrap}
     .sched-badge.active{display:inline-block}
     .sched-tabs{display:flex;gap:4px;background:#f0e6da;border-radius:9px;padding:3px;margin-bottom:10px}
     .sched-tab{flex:1;border:0;background:transparent;color:#8a6a4f;font-size:.8rem;font-weight:700;
@@ -519,6 +530,9 @@
       <div class="main-temp-half">
         <div class="temp-big" id="ble-room-temp" style="opacity:.5">—°</div>
         <div class="temp-small-label" id="ble-room-label">Température actuelle</div>
+        <!-- Pendant du badge « Programmé » : rappelle que le poêle ne charge pas
+             seul. Piloté par status/full feed_manual, via applyFeedMode(). -->
+        <div class="sched-badge" id="feed-badge" title="Chargement manuel des bûches">🪵 Mode manuel</div>
       </div>
       <div class="main-temp-half">
         <div class="wanted-controls">
@@ -799,11 +813,59 @@
       <div>
         <div class="settings-section">Notifications</div>
         <div class="gap-col">
-          <div style="font-size:.82rem;opacity:.75;margin-bottom:4px">Les alertes sont envoyées directement par le poêle : défaut, cassettes vides, feu éteint, rapport quotidien. Installez l'application gratuite <b>ntfy</b> et abonnez-vous au lien ci-dessous pour les recevoir.</div>
-          <div id="ntfy-link-box" style="font-size:.72rem;word-break:break-all;background:#f6efe7;border:1px solid #e0d2c2;border-radius:8px;padding:8px;color:#5a3015">En attente du poêle…</div>
-          <button class="btn btn-brown btn-sm btn-full" id="ntfy-copy-btn" onclick="copyNtfyLink()">📋 Copier le lien d'abonnement</button>
+          <div style="font-size:.82rem;opacity:.75">Les alertes sont envoyées directement par le poêle (défaut, cassettes vides, feu éteint, rapport quotidien) via le service gratuit <b>ntfy</b>. Où voulez-vous les recevoir ?</div>
+          <!-- Deux parcours d'abonnement bien distincts : l'application ntfy sur
+               le téléphone (notifications même appli fermée) ou le site ntfy
+               dans un navigateur d'ordinateur (navigateur ouvert uniquement). -->
+          <div class="sched-tabs" style="margin-bottom:0">
+            <button type="button" class="sched-tab" id="ntfy-tab-phone" onclick="setNtfyMode('phone')">📱 Sur mon téléphone</button>
+            <button type="button" class="sched-tab" id="ntfy-tab-web"   onclick="setNtfyMode('web')">💻 Sur un ordinateur</button>
+          </div>
+          <div id="ntfy-unavail" class="ntfy-box">En attente du poêle…</div>
+
+          <div id="ntfy-panel-phone" class="ntfy-panel">
+            <div class="ntfy-step"><b>1</b><span>Installez l'application gratuite <b>ntfy</b> :</span></div>
+            <div class="row-btns">
+              <a class="btn btn-tan btn-sm" style="flex:1;text-align:center;text-decoration:none" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store (iPhone)</a>
+              <a class="btn btn-tan btn-sm" style="flex:1;text-align:center;text-decoration:none" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play (Android)</a>
+            </div>
+            <div class="ntfy-step"><b>2</b><span>Ouvrez ntfy et appuyez sur <b>+</b>. Collez le nom ci-dessous comme sujet, puis appuyez sur <b>S'abonner</b> (ou <b>Subscribe</b>).</span></div>
+            <div class="ntfy-box" id="ntfy-topic-box">—</div>
+            <button class="btn btn-brown btn-sm btn-full" onclick="copyNtfyTopic()">📋 Copier le nom d'abonnement</button>
+            <a class="btn btn-brown btn-sm btn-full" id="ntfy-deeplink" style="display:none;text-align:center;text-decoration:none;box-sizing:border-box" href="#">⚡ Ou s'abonner directement (Android, ntfy installé)</a>
+            <div class="ntfy-step"><b>3</b><span>Autorisez les notifications pour ntfy si le téléphone le demande, puis envoyez une notification test ci-dessous.</span></div>
+            <a class="ntfy-help" href="https://docs.ntfy.sh/subscribe/phone/" target="_blank" rel="noopener">Guide détaillé ntfy (en anglais) ↗</a>
+          </div>
+
+          <div id="ntfy-panel-web" class="ntfy-panel">
+            <div class="ntfy-step"><b>1</b><span>Ouvrez la page ntfy du poêle dans votre navigateur (Chrome, Firefox, Edge, Safari) :</span></div>
+            <a class="btn btn-brown btn-sm btn-full" id="ntfy-open-web" style="text-align:center;text-decoration:none;box-sizing:border-box" href="#" target="_blank" rel="noopener">🌐 Ouvrir la page ntfy</a>
+            <div class="ntfy-step"><b>2</b><span>Si la page demande un nom d'abonnement, collez celui-ci et cliquez sur <b>Subscribe</b> (S'abonner) :</span></div>
+            <div class="ntfy-box" id="ntfy-topic-box-web">—</div>
+            <button class="btn btn-brown btn-sm btn-full" onclick="copyNtfyTopic()">📋 Copier le nom d'abonnement</button>
+            <div class="ntfy-step"><b>3</b><span>Acceptez quand le navigateur demande l'autorisation d'afficher des notifications.</span></div>
+            <div class="ntfy-warn">⚠️ Sur ordinateur, les alertes n'arrivent que tant que le navigateur reste ouvert. Pour être prévenu partout, utilisez plutôt l'application sur votre téléphone.</div>
+            <a class="ntfy-help" href="https://docs.ntfy.sh/subscribe/web/" target="_blank" rel="noopener">Guide détaillé ntfy (en anglais) ↗</a>
+          </div>
+
           <button class="btn btn-sm btn-full" id="push-test-btn" style="background:#5a9e6f;color:#fff" onclick="testPushNotification()">🧪 Envoyer une notification test</button>
           <div id="push-notif-status" style="font-size:.8rem;margin-top:2px;opacity:.7;text-align:center"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Thermomètre de la pièce : capteur Xiaomi d'origine (firmware stock),
+           déchiffré par le poêle avec sa clé de liaison. Envoyé NON retenu sur
+           cmd/room_sensor_cfg — la clé ne doit pas rester sur le broker ; le
+           poêle l'enregistre en NVS et renvoie l'adresse MAC dans status/full
+           (room_sensor_mac), jamais la clé. -->
+      <div>
+        <div class="settings-section">Thermomètre de la pièce (Bluetooth)</div>
+        <div class="gap-col">
+          <input type="text" id="room-sensor-cfg" class="conn-input" autocomplete="off" spellcheck="false" placeholder="MAC + clé, ex. A4:C1:38:B7:C0:40 af3dbf6ccf5cdf967a415b5b986ca8ee" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:.78rem"/>
+          <button class="btn btn-brown btn-sm btn-full" onclick="saveRoomSensorConfig()">Connecter le thermomètre</button>
+          <div style="font-size:.78rem;color:#8B4513;text-align:center">Thermomètre actuel : <span id="room-sensor-mac-val">—</span></div>
         </div>
       </div>
 
@@ -1129,6 +1191,7 @@ function ignoreEcho(f, incoming) {
 window.addEventListener('load', () => {
   loadSettings();
   initSchedule();
+  renderNtfyMode();
   // Restaure la dernière température souhaitée depuis localStorage
   const savedRoom = parseInt(localStorage.getItem(LS_ROOM));
   if (savedRoom >= 18 && savedRoom <= 23) roomTemp = savedRoom;
@@ -1565,6 +1628,7 @@ function applyFull(d) {
     bleRoomTemp   = bleRoomTempOk ? val : null;
     updateBleRoomTemp();
   }
+  if (d.room_sensor_mac !== undefined) applyRoomSensorMac(d.room_sensor_mac);
   // État des portes : le firmware les publie depuis toujours, mais l'app les
   // ignorait. La fermeture forcée en a besoin — l'actionneur de trappe est coupé
   // par les contacts de porte, donc lancer une fermeture porte ouverte ne
@@ -1969,6 +2033,8 @@ function applyFeedMode(on) {
   feedManual = !!on;
   const tog = document.getElementById('feed-mode-toggle');
   if (tog) tog.checked = feedManual;
+  const badge = document.getElementById('feed-badge');
+  if (badge) badge.classList.toggle('active', feedManual);
   const note = document.getElementById('feed-mode-note');
   if (note) note.textContent = feedManual
     ? 'Le poêle sonnera et vous préviendra quand une bûche sera nécessaire.'
@@ -2625,6 +2691,29 @@ function saveHouseParams() {
 }
 
 // ============================================================
+// PARAMÈTRES — THERMOMÈTRE DE LA PIÈCE (BLUETOOTH)
+// ============================================================
+function saveRoomSensorConfig() {
+  const input = document.getElementById('room-sensor-cfg');
+  // Le firmware attend exactement 12 hex (MAC) + 32 hex (clé) ; toute
+  // ponctuation (deux-points, tirets, espaces) est ignorée.
+  const hex = (input.value || '').replace(/[^0-9a-fA-F]/g, '');
+  if (hex.length !== 44) {
+    showToast('Format invalide — MAC (12) + clé (32) = 44 caractères hexadécimaux, reçu ' + hex.length);
+    return;
+  }
+  if (!client || !client.connected) { alert('Non connecté au poêle'); return; }
+  publish('cmd/room_sensor_cfg', hex);   // non retenu — la clé ne doit pas rester sur le broker
+  input.value = '';
+  showToast('Thermomètre envoyé — en attente de confirmation du poêle…');
+}
+
+function applyRoomSensorMac(mac) {
+  const el = document.getElementById('room-sensor-mac-val');
+  if (el) el.textContent = mac ? mac : 'aucun configuré';
+}
+
+// ============================================================
 // BASCULES UI
 // ============================================================
 function toggleSettings() {
@@ -3163,30 +3252,61 @@ function urlBase64ToUint8Array(base64) {
 // arrive dès la connexion sans que le poêle ait à être réveillé. Elle contient
 // un secret propre à chaque poêle : c'est le lien qui fait office de mot de
 // passe, d'où l'absence d'affichage tant qu'on ne l'a pas reçu.
-let ntfyLink = '';
+//
+// Deux parcours, choisis par l'onglet téléphone / ordinateur :
+//   • téléphone : l'application ntfy demande le NOM du sujet (pas l'URL) dans
+//     son bouton « + ». Android sait aussi s'abonner par lien ntfy://hôte/sujet ;
+//     iOS ne documente pas ce lien, on ne le propose donc que sur Android.
+//   • ordinateur : la page web du sujet. Sur Chrome/Firefox/Edge de bureau,
+//     ntfy ne notifie que navigateur ouvert — l'utilisateur doit le savoir.
+let ntfyLink  = '';   // https://ntfy.sh/<sujet>, tel que publié par le poêle
+let ntfyTopic = '';
+let ntfyMode  = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'phone' : 'web';
 
 function setNtfyLink(url) {
-  ntfyLink = (url || '').trim();
-  const box = document.getElementById('ntfy-link-box');
-  const btn = document.getElementById('ntfy-copy-btn');
-  if (!box) return;
-  if (ntfyLink) {
-    box.textContent = ntfyLink;
-    if (btn) btn.disabled = false;
-  } else {
-    box.textContent = 'Notifications indisponibles sur ce poêle.';
-    if (btn) btn.disabled = true;
-  }
+  ntfyLink  = (url || '').trim();
+  ntfyTopic = '';
+  let host  = '';
+  try { const u = new URL(ntfyLink); host = u.host; ntfyTopic = u.pathname.replace(/^\/+|\/+$/g, ''); }
+  catch(e) { ntfyLink = ''; }
+  const topicTxt = ntfyTopic || '—';
+  document.getElementById('ntfy-topic-box').textContent     = topicTxt;
+  document.getElementById('ntfy-topic-box-web').textContent = topicTxt;
+  document.getElementById('ntfy-open-web').href = ntfyLink || '#';
+  const dl = document.getElementById('ntfy-deeplink');
+  dl.href = ntfyTopic ? 'ntfy://' + host + '/' + ntfyTopic + '?display=WoodMood' : '#';
+  dl.style.display = (ntfyTopic && /Android/i.test(navigator.userAgent)) ? '' : 'none';
+  const un = document.getElementById('ntfy-unavail');
+  un.textContent = 'Notifications indisponibles sur ce poêle.';
+  renderNtfyMode();
 }
 
-async function copyNtfyLink() {
-  if (!ntfyLink) return;
+function setNtfyMode(mode) {
+  ntfyMode = mode;
+  renderNtfyMode();
+}
+
+function renderNtfyMode() {
+  const ready = !!ntfyTopic;
+  document.getElementById('ntfy-tab-phone').classList.toggle('active', ntfyMode === 'phone');
+  document.getElementById('ntfy-tab-web').classList.toggle('active',   ntfyMode === 'web');
+  document.getElementById('ntfy-panel-phone').classList.toggle('show', ready && ntfyMode === 'phone');
+  document.getElementById('ntfy-panel-web').classList.toggle('show',   ready && ntfyMode === 'web');
+  document.getElementById('ntfy-unavail').style.display = ready ? 'none' : '';
+}
+
+async function copyNtfyTopic() {
+  if (!ntfyTopic) return;
   try {
-    await navigator.clipboard.writeText(ntfyLink);
-    showToast('Lien copié — collez-le dans l\'application ntfy');
+    await navigator.clipboard.writeText(ntfyTopic);
+    showToast('Nom copié — collez-le dans ntfy');
   } catch(e) {
-    // clipboard refusé (http, permissions) — on ouvre l'onglet à la place
-    window.open(ntfyLink, '_blank', 'noopener');
+    // Presse-papiers refusé (http, permissions) : on sélectionne le texte
+    // affiché pour que l'utilisateur puisse le copier à la main.
+    const box = document.getElementById(ntfyMode === 'web' ? 'ntfy-topic-box-web' : 'ntfy-topic-box');
+    const r = document.createRange(); r.selectNodeContents(box);
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    showToast('Copie impossible — le nom est sélectionné, copiez-le à la main');
   }
 }
 
