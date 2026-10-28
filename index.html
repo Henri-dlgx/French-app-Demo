@@ -660,13 +660,7 @@
           <span style="font-size:.85rem;font-weight:600;color:#5a3015">Mode silencieux</span>
           <label class="tgl"><input type="checkbox" id="silence-toggle" onchange="setSilenceMode(this.checked)"><span class="tgl-sl"></span></label>
         </div>
-        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Pour la nuit : coupe le chargement des bûches et limite les ventilateurs à 35 % jusqu'à ce que le feu s'éteigne ; le poêle passe ensuite en refroidissement. Ne s'active que lorsque le poêle est en marche.</div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:.82rem;font-weight:600;color:#5a3015">Refroidissement sous</span>
-          <input type="number" id="silence-pct" value="80" min="50" max="95" step="5" inputmode="numeric" onchange="setSilencePct(this.value)"
-                 style="flex:none;width:4.5em;padding:6px 8px;border:1px solid #d8c4b0;border-radius:8px;font-size:.9rem;color:#5a3015;background:#fff">
-          <span style="font-size:.82rem;color:#5a3015">% de la consigne</span>
-        </div>
+        <div style="font-size:.78rem;color:#888">Pour la nuit : coupe le chargement des bûches et limite les ventilateurs à 35 % jusqu'à ce que le feu s'éteigne ; le poêle passe en refroidissement quand il descend sous 80 % de la consigne. Ne s'active que lorsque le poêle est en marche.</div>
         <div id="silence-status" style="font-size:.8rem;font-weight:600;color:#c0392b;margin-top:8px;min-height:1.1em"></div>
       </div>
     </div>
@@ -1147,7 +1141,7 @@ let lastKnownBleTemp   = null;   // dernière lecture BLE valide — affichée s
 // ── Verrou commande en attente — évite le rebond MQTT ──
 // Deux usages :
 //   lockField(f)        → verrou minuté simple : on ignore les échos pendant
-//                         PENDING_TTL ms (system_state, silence_pct).
+//                         PENDING_TTL ms (system_state).
 //   lockField(f, val)   → verrou « optimiste » : on affiche `val` tout de suite et
 //                         on ignore les échos JUSQU'À ce que le firmware confirme
 //                         cette valeur — puis on libère immédiatement (room_temp,
@@ -1557,7 +1551,8 @@ function onMessage(topic, payloadBuf) {
   if (sub === 'status/ntfy_link') { setNtfyLink(payload); return; }
   if (sub === 'status/daily_report') { applyDailyReport(payload); return; }
   // Mode silencieux — topic RETENU {on,pct,armed}, publié à la connexion, après
-  // chaque cmd/silence(_pct) (même refusée) et à chaque changement côté poêle.
+  // chaque cmd/silence (même refusée) et à chaque changement côté poêle.
+  // pct = seuil de refroidissement, fixé à 80 % par le firmware (non réglable).
   if (sub === 'status/silence') { applySilence(payload); return; }
   // Demande de rechargement (chargement manuel) — topic RETENU, publié par le
   // firmware uniquement sur changement d'état ou de numéro de rappel.
@@ -2201,7 +2196,8 @@ function calcBurnTime() {
 // MODE SILENCIEUX
 // ============================================================
 // Plus de minuterie : le poêle coupe le chargement et plafonne les ventilateurs
-// jusqu'à ce que le feu retombe sous `pct` % de la consigne, puis passe de
+// jusqu'à ce que le feu retombe sous `pct` % de la consigne (80 %, fixé par le
+// firmware), puis passe de
 // lui-même en refroidissement. Il efface le mode en arrivant en veille.
 // La vérité vient uniquement de status/silence (plus de silence_mode dans status/full).
 const silence = { on: false, pct: 80, armed: false };
@@ -2222,8 +2218,6 @@ function applySilence(payload) {
   }
   const tog = document.getElementById('silence-toggle');
   if (tog) tog.checked = silence.on;
-  const inp = document.getElementById('silence-pct');
-  if (inp && document.activeElement !== inp) inp.value = silence.pct;
   renderSilence();
 }
 
@@ -2248,17 +2242,6 @@ function setSilenceMode(on) {
   publish('cmd/silence', on ? '1' : '0');
   showToast(on ? 'Mode silencieux activé — plus de chargement, ventilateurs à 35 % jusqu\'à extinction du feu'
                : 'Mode silencieux désactivé');
-}
-
-function setSilencePct(v) {
-  let pct = parseInt(v, 10);
-  if (!Number.isFinite(pct)) pct = silence.pct;
-  pct = Math.min(95, Math.max(50, pct));
-  const inp = document.getElementById('silence-pct');
-  if (inp) inp.value = pct;
-  silence.pct = pct;
-  renderSilence();
-  publish('cmd/silence_pct', String(pct));
 }
 
 // ============================================================
