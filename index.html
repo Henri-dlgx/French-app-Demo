@@ -9,7 +9,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- Version figée : le lien avec le poêle (reconnexion, drapeau retain, refus
+       de connexion) dépend du comportement exact de mqtt.js. Sans numéro, unpkg
+       servirait la dernière version publiée, sans aucun commit de notre côté. -->
+  <script src="https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js"></script>
   <style>
     /* ── Base ── */
     *{box-sizing:border-box;margin:0;padding:0}
@@ -60,6 +63,8 @@
     .link-sweep::after{content:"";position:absolute;top:0;bottom:0;width:35%;
       background:rgba(255,255,255,.9);border-radius:2px;animation:linksweep 1.6s ease-in-out infinite}
     #link-bar.ok .link-sweep{display:none}
+    #link-bar.refused{background:#c0392b}
+    #link-bar.refused .link-dots,#link-bar.refused .link-sweep{display:none}
     @keyframes linkdot  {0%,60%,100%{opacity:.15;transform:translateY(0)} 30%{opacity:1;transform:translateY(-3px)}}
     @keyframes linksweep{from{left:-35%} to{left:100%}}
     @keyframes linknudge{20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)}}
@@ -1413,10 +1418,12 @@ function connect() {
   // précédente ne vaut plus rien.
   stoveSeenMs = 0;
   linkUpSince = 0;
+  linkRefused = false;
+  clearTimeout(refusedRetry);
 
   if (client) { try { client.end(true); } catch(e){} }
 
-  client = mqtt.connect(`wss://${MQTT_BROKER}:${MQTT_PORT}/mqtt`, {
+  const c = client = mqtt.connect(`wss://${MQTT_BROKER}:${MQTT_PORT}/mqtt`, {
     username:        cfg.user,
     password:        cfg.pass,
     clientId:        'woodmood-web-' + Math.random().toString(16).substr(2,8),
@@ -1429,6 +1436,8 @@ function connect() {
   updateLinkUi();
 
   client.on('connect', () => {
+    linkRefused = false;
+    clearTimeout(refusedRetry);
     updateLinkUi();   // orange — courtier OK, en attente du poêle
     client.subscribe(prefix + '/status/#');
     client.subscribe(prefix + '/schedule');
@@ -1474,6 +1483,20 @@ function connect() {
     const reason = (err && err.message) ? err.message : String(err);
     console.error('[MQTT] connection error:', reason, err);
     showToast('Échec MQTT : ' + reason);
+    // Connexion refusée par le courtier (code CONNACK) : mqtt.js 5 ne retente
+    // alors PLUS jamais de lui-même. Sans ceci, un refus passager (« Server
+    // unavailable ») laissait l'app sur « Connexion au serveur… » pour toujours.
+    // Identifiants refusés : on le dit dans le bandeau et on retente lentement
+    // (compte créé ou corrigé côté serveur entre-temps) ; autre refus : au
+    // rythme normal.
+    const rc = (err && typeof err.code === 'number') ? err.code : 0;
+    if (rc > 0 && !c.connected) {
+      linkRefused = AUTH_REFUSED_CODES.includes(rc);
+      clearTimeout(refusedRetry);
+      refusedRetry = setTimeout(() => {
+        if (client === c && !c.connected) { try { c.reconnect(); } catch (e) {} }
+      }, linkRefused ? REFUSED_RETRY_MS : 5000);
+    }
     updateLinkUi();
   });
   client.on('reconnect', updateLinkUi);
@@ -1482,6 +1505,8 @@ function connect() {
 function disconnect() {
   if (client) { try { client.end(true); } catch(e){} client = null; }
   stoveSeenMs = 0;
+  linkRefused = false;
+  clearTimeout(refusedRetry);
   updateLinkUi();
   document.getElementById('conn-card').style.display = '';
   fillForm();
@@ -1492,7 +1517,9 @@ function setDotState(s) {
   const label = document.getElementById('status-label');
   dot.className = 'status-dot';
   if      (s === 'connecting') { dot.classList.add('connecting'); label.textContent = 'Connexion…';   }
+  else if (s === 'waiting')    { dot.classList.add('connected');  label.textContent = 'En attente du poêle…'; }
   else if (s === 'connected')  { dot.classList.add('connected');  label.textContent = 'Poêle hors ligne'; }
+  else if (s === 'refused')    {                                  label.textContent = 'Identifiants refusés'; }
   else if (s === 'alive')      { dot.classList.add('alive');      label.textContent = 'Connecté';     }
   else                         {                                  label.textContent = 'Déconnecté';   }
 }
@@ -1517,11 +1544,15 @@ const STOVE_SLOW_HINT_MS = 30000;  // au-delà, on explique quoi vérifier
 const LINK_OK_FLASH_MS   = 1800;   // « Poêle connecté » avant de masquer le bandeau
 const LINK_WAIT_TOAST    = 'Patientez : connexion au poêle en cours…';
 const RESUME_PROBE_MS    = 12000;  // retour au premier plan : délai avant reconnexion forcée
+const AUTH_REFUSED_CODES = [4, 5, 134, 135];  // CONNACK : identifiants refusés (MQTT 3.1.1 / 5)
+const REFUSED_RETRY_MS   = 30000;  // identifiants refusés : on retente quand même, lentement
 
 let linkWaitSince = 0;     // début de l'attente en cours (0 = lien OK)
 let linkUpSince   = 0;     // le lien est OK depuis… (0 = non)
 let linkOkTimer   = null;
 let resumeProbe   = null;
+let linkRefused   = false; // le courtier a refusé numéro de série / mot de passe
+let refusedRetry  = null;
 
 function stoveLive() {
   return !!(client && client.connected) &&
@@ -1548,7 +1579,7 @@ function updateLinkUi() {
   if (!client) {
     setDotState('disconnected');
     clearTimeout(linkOkTimer);
-    bar.classList.remove('show', 'ok');
+    bar.classList.remove('show', 'ok', 'refused');
     linkWaitSince = 0;
     linkUpSince   = 0;
     return;
@@ -1562,6 +1593,7 @@ function updateLinkUi() {
       if (bar.classList.contains('show')) {
         const toast = document.getElementById('toast');
         if (toast.textContent === LINK_WAIT_TOAST) toast.classList.remove('show');
+        bar.classList.remove('refused');
         bar.classList.add('ok');
         text.textContent = 'Poêle connecté';
         sub.textContent  = '';
@@ -1573,15 +1605,24 @@ function updateLinkUi() {
     return;
   }
 
-  setDotState(broker ? 'connected' : 'connecting');
   linkUpSince = 0;
   if (!linkWaitSince) linkWaitSince = Date.now();
+  const slow = (Date.now() - linkWaitSince) >= STOVE_SLOW_HINT_MS;
+  // Les premières secondes d'attente sont normales (prochain heartbeat dans
+  // 10 s au plus) : « hors ligne » seulement une fois l'attente anormale.
+  setDotState(linkRefused ? 'refused' : !broker ? 'connecting' : slow ? 'connected' : 'waiting');
   clearTimeout(linkOkTimer);
   bar.classList.remove('ok');
+  bar.classList.toggle('refused', linkRefused);
   bar.classList.add('show');
 
-  const slow = (Date.now() - linkWaitSince) >= STOVE_SLOW_HINT_MS;
-  if (!broker) {
+  if (linkRefused) {
+    // Pas un problème de réseau : le dire, sinon on envoie l'utilisateur
+    // vérifier sa box alors que c'est le mot de passe (changé depuis un autre
+    // téléphone, par exemple).
+    text.textContent = 'Identifiants refusés';
+    sub.textContent  = 'Le serveur refuse ce numéro de série ou ce mot de passe. Touchez « Déconnecter » dans Paramètres pour les ressaisir.';
+  } else if (!broker) {
     text.textContent = 'Connexion au serveur';
     sub.textContent  = slow
       ? 'Pas de réseau ? Vérifiez la connexion internet de ce téléphone.'
@@ -1608,18 +1649,28 @@ function initLinkGuard() {
   // Bloque toute interaction dans une zone data-needs-stove tant que le poêle
   // n'est pas en ligne. Phase de capture sur window : l'événement est arrêté
   // avant d'atteindre les onclick/onchange existants. pointerdown n'empêche pas
-  // le défilement natif ; il coupe en revanche le glisser de la courbe.
+  // le défilement natif. Le glisser de la courbe démarre aussi sur touchstart
+  // (téléphones), d'où son ajout : écouteur passif, donc pas de preventDefault —
+  // stopPropagation suffit à ne pas atteindre svg.ontouchstart, et le défilement
+  // reste possible.
+  //
+  // On teste stoveLive() et non la classe link-down du body : celle-ci n'est
+  // rafraîchie qu'une fois par seconde, et dans cet intervalle une touche
+  // passait le verrou puis se faisait refuser par publish() — après que le
+  // gestionnaire avait déjà basculé l'affichage.
   const block = (e) => {
-    if (!document.body.classList.contains('link-down')) return;
+    if (stoveLive()) return;
     const zone = e.target.closest && e.target.closest('[data-needs-stove]');
     if (!zone) return;
-    e.preventDefault();
+    if (e.type !== 'touchstart') e.preventDefault();
     e.stopPropagation();
+    if (!document.body.classList.contains('link-down')) updateLinkUi();
     if (e.type === 'focusin' && e.target.blur) e.target.blur();
     if (e.type === 'click' || (e.type === 'keydown' && (e.key === 'Enter' || e.key === ' '))) nudgeLinkBar();
   };
   ['click', 'pointerdown', 'mousedown', 'keydown', 'focusin', 'change', 'input']
     .forEach(t => window.addEventListener(t, block, true));
+  window.addEventListener('touchstart', block, { capture: true, passive: true });
 
   setInterval(updateLinkUi, 1000);
 
@@ -1627,6 +1678,10 @@ function initLinkGuard() {
   // sans que mqtt.js le sache encore (keepalive 60 s). On réévalue tout de
   // suite — le bandeau réapparaît si le dernier signe de vie est trop vieux —
   // puis, si aucun heartbeat n'arrive vite, on force une reconnexion.
+  // connect() et non client.reconnect() : sur un client qui se croit encore
+  // connecté, mqtt.js 5 ferme d'abord poliment (DISCONNECT envoyé dans la socket
+  // morte, puis attente de sa fermeture — voire d'un accusé QoS 1 qui ne viendra
+  // jamais). connect() coupe net (end(true)) et repart sur un client neuf.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     updateLinkUi();
@@ -1634,9 +1689,7 @@ function initLinkGuard() {
     clearTimeout(resumeProbe);
     resumeProbe = setTimeout(() => {
       resumeProbe = null;
-      if (client && client.connected && !stoveLive()) {
-        try { client.reconnect(); } catch (e) {}
-      }
+      if (client && client.connected && !stoveLive()) connect();
     }, RESUME_PROBE_MS);
   });
   updateLinkUi();
@@ -1961,31 +2014,33 @@ function sysButtonClick() {
   const btn      = document.getElementById('sys-btn');
   const btnState = systemState || [...btn.classList].find(c => c !== 'sys-btn') || 'startup';
 
+  // Le temps passé sur confirm() peut suffire à rendre la preuve de vie trop
+  // vieille : publish() refuse alors, et on ne touche à rien de l'affichage.
   if (btnState === 'startup') {
     const hot = stoveTemp !== null && stoveTemp > 150;
     const msg = hot
       ? 'Le poêle est chaud (' + Math.round(stoveTemp) + '°). Passer en refroidissement ?'
       : 'Le poêle est froid. Éteindre le système ?';
     if (!confirm(msg)) return;
+    if (!publish('cmd/cooldown', '1')) return;
     inCooldown = true;
     lockField('system_state');
-    publish('cmd/cooldown', '1');
     applySystemState(hot ? 'cooldown' : 'standby');
   } else if (btnState === 'auto' || btnState === 'active') {
     if (!confirm('Passer en mode refroidissement ?')) return;
+    if (!publish('cmd/cooldown', '1')) return;
     inCooldown = true;
     lockField('system_state');
-    publish('cmd/cooldown', '1');
     applySystemState('cooldown');
   } else if (btnState === 'cooldown') {
     if (!confirm('Annuler le refroidissement et revenir en mode automatique ?')) return;
+    if (!publish('cmd/cooldown', '0')) return;
     inCooldown = false;
     lockField('system_state');
-    publish('cmd/cooldown', '0');
     applySystemState('auto');
   } else if (btnState === 'standby') {
+    if (!publish('cmd/start', '1')) return;
     lockField('system_state');
-    publish('cmd/start', '1');
     applySystemState('startup');
   }
 }
@@ -2334,9 +2389,12 @@ function closeLogModal() {
 
 function applyLogCount(side, n) {
   n = Math.min(6, Math.max(0, n || 0));
+  // La fenêtre de saisie est hors des zones verrouillées et peut rester ouverte
+  // longtemps : si le poêle a décroché entre-temps, publish() refuse et on
+  // n'affiche pas un compte que le poêle n'a jamais reçu.
+  if (!publish('cmd/log_level_' + mapSide(side), n)) return;
   if (side === 'l') logL = n; else logR = n;
   lockField(side === 'l' ? 'log_l' : 'log_r', n); // garde le compte affiché jusqu'à confirmation
-  publish('cmd/log_level_' + mapSide(side), n);
   renderBars(side === 'l' ? 'left' : 'right', n);
   document.getElementById(side === 'l' ? 'count-left' : 'count-right').textContent = n + ' bûches';
   calcBurnTime();
@@ -2416,7 +2474,7 @@ function setSilenceMode(on) {
 // ============================================================
 function resetESP() {
   if (!confirm('Redémarrer le poêle ? Tous les réglages sont conservés.')) return;
-  publish('cmd/reset', '1');
+  if (!publish('cmd/reset', '1')) return;
   showToast('Redémarrage du poêle…');
 }
 
@@ -2777,7 +2835,8 @@ function forceClose(fromBanner = false) {
       + 'À n\'utiliser qu\'en dépannage, si une trappe est restée ouverte.\n\nContinuer ?')) {
     return;
   }
-  publish('cmd/force_close', '1');
+  // Pas de « lancée » si publish() a refusé pendant la lecture du confirm().
+  if (!publish('cmd/force_close', '1')) return;
   showToast('Fermeture forcée lancée…');
 }
 
@@ -2786,7 +2845,7 @@ function forceCloseRetry() {
     alert('Refermez toutes les portes avant de réessayer : la trappe ne peut pas bouger porte ouverte.');
     return;
   }
-  publish('cmd/force_close', 'retry');
+  if (!publish('cmd/force_close', 'retry')) return;
   showToast('Nouvelle tentative…');
 }
 
@@ -2802,13 +2861,13 @@ function forceCloseOverride() {
       + 'Le poêle ne peut pas le vérifier lui-même : il vous croira sur parole et '
       + 'recommencera à charger des bûches. Si une trappe est en réalité ouverte, '
       + 'une bûche tombera dans un foyer ouvert.\n\nConfirmer ?')) return;
-  publish('cmd/force_close', 'override');
+  if (!publish('cmd/force_close', 'override')) return;
   showToast('Verrou levé — chargement réactivé');
 }
 
 function forceCloseCancel() {
   if (!confirm('Abandonner la fermeture ?\n\nLa trappe restera considérée comme ouverte et le poêle refusera de charger des bûches tant qu\'une fermeture forcée n\'aura pas abouti.')) return;
-  publish('cmd/force_close', '0');
+  if (!publish('cmd/force_close', '0')) return;
   showToast('Fermeture abandonnée');
 }
 
@@ -2976,23 +3035,26 @@ function updateSchedTabs() {
 }
 
 function setSchedEnabled(on) {
+  // Le firmware est la seule autorité : on lui dit activé/désactivé (persisté en
+  // NVS + renvoyé dans sched_enabled), et tous les téléphones convergent dessus.
+  // cmd/schedule_en n'est PAS retenu : il passe donc par publish(), qui refuse
+  // quand le poêle n'est pas en ligne — la bascule revient alors à l'état connu.
+  if (!publish('cmd/schedule_en', on ? '1' : '0')) {
+    document.getElementById('tog-sched-enable').checked = schedEnabled;
+    return;
+  }
+  if (on) {
+    // Pousse la courbe du jour (jour actif en premier) pour que le firmware l'ait.
+    client.publish(prefix + '/schedule', schedPayload(), { qos:1, retain:true });
+  }
+  // On NE vide PAS la courbe retenue à la désactivation : c'est la seule copie
+  // partagée entre téléphones. Le firmware ne l'applique que si la programmation
+  // est activée (activation découplée des données), donc la garder est sans risque.
   schedEnabled = on;
   lockField('sched_enabled');
   localStorage.setItem(LS_SCHED_EN, on ? '1' : '0');
   document.getElementById('sched-badge').classList.toggle('active', on);
   updateSchedStatus();
-  if (client && client.connected) {
-    // Le firmware est la seule autorité : on lui dit activé/désactivé (persisté en
-    // NVS + renvoyé dans sched_enabled), et tous les téléphones convergent dessus.
-    client.publish(prefix + '/cmd/schedule_en', on ? '1' : '0', { qos:1 });
-    if (on) {
-      // Pousse la courbe du jour (jour actif en premier) pour que le firmware l'ait.
-      client.publish(prefix + '/schedule', schedPayload(), { qos:1, retain:true });
-    }
-    // On NE vide PAS la courbe retenue à la désactivation : c'est la seule copie
-    // partagée entre téléphones. Le firmware ne l'applique que si la programmation
-    // est activée (activation découplée des données), donc la garder est sans risque.
-  }
 }
 
 function applyScheduleSlot() {
