@@ -38,6 +38,35 @@
     @keyframes blink   {to{opacity:.3}}
     @keyframes hbpulse {50%{opacity:.4}}
 
+    /* ── Bandeau de connexion ──
+       Collé en haut de l'écran tant que le poêle n'a pas donné signe de vie.
+       Les zones marquées data-needs-stove sont grisées et bloquées au même
+       moment : une commande envoyée dans le vide ne serait jamais appliquée. */
+    #link-bar{display:none;position:sticky;top:max(6px,env(safe-area-inset-top));z-index:90;
+      background:#e67e22;color:#fff;border-radius:12px;padding:10px 14px 12px;
+      box-shadow:0 4px 16px rgba(0,0,0,.45);overflow:hidden;text-align:center}
+    #link-bar.show{display:block}
+    #link-bar.ok{background:#27ae60}
+    #link-bar.nudge{animation:linknudge .4s}
+    .link-row{font-weight:700;font-size:.95rem;letter-spacing:.02em}
+    .link-dots{font-size:1.25em;line-height:0;margin-left:1px}
+    .link-dots span{display:inline-block;animation:linkdot 1.4s infinite}
+    .link-dots span:nth-child(2){animation-delay:.2s}
+    .link-dots span:nth-child(3){animation-delay:.4s}
+    #link-bar.ok .link-dots{display:none}
+    .link-sub{font-size:.76rem;opacity:.92;margin-top:3px;line-height:1.35}
+    .link-sub:empty{display:none}
+    .link-sweep{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.25)}
+    .link-sweep::after{content:"";position:absolute;top:0;bottom:0;width:35%;
+      background:rgba(255,255,255,.9);border-radius:2px;animation:linksweep 1.6s ease-in-out infinite}
+    #link-bar.ok .link-sweep{display:none}
+    @keyframes linkdot  {0%,60%,100%{opacity:.15;transform:translateY(0)} 30%{opacity:1;transform:translateY(-3px)}}
+    @keyframes linksweep{from{left:-35%} to{left:100%}}
+    @keyframes linknudge{20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)}}
+    body.link-down [data-needs-stove]{opacity:.45;filter:grayscale(.5);cursor:not-allowed;
+      transition:opacity .3s,filter .3s}
+    body.link-down [data-needs-stove] *{cursor:not-allowed}
+
     /* ── Connection panel ── */
     .conn-input{padding:9px 12px;border:1px solid #d0b08a;border-radius:8px;font-size:.9rem;width:100%}
     .conn-input:focus{outline:none;border-color:#8B4513}
@@ -222,13 +251,6 @@
       font-size:.82rem;cursor:pointer;color:#666;transition:all .15s;font-weight:500}
     .ins-btn.active{border-color:#8B4513;background:#8B4513;color:#fff;font-weight:700}
 
-    /* ── Offline overlay ── */
-    #offline-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
-      z-index:100;align-items:center;justify-content:center}
-    #offline-overlay.show{display:flex}
-    .offline-box{background:#fff;border-radius:18px;padding:24px;max-width:300px;text-align:center}
-    .offline-box h2{color:#c0392b;margin-bottom:8px}
-    .offline-box p{font-size:.88rem;color:#555;margin-bottom:16px}
     /* ── Modale nombre de bûches / choix du côté ── */
     #log-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
       z-index:150;align-items:center;justify-content:center;padding:20px}
@@ -370,8 +392,15 @@
       padding:1px 5px;white-space:nowrap}
   </style>
 </head>
-<body>
+<body class="link-down">
 <div class="wrap">
+
+  <!-- ── Bandeau de connexion (voir updateLinkUi()) ── -->
+  <div id="link-bar" role="status" aria-live="polite">
+    <div class="link-row"><span id="link-text">Connexion au poêle</span><span class="link-dots"><span>.</span><span>.</span><span>.</span></span></div>
+    <div class="link-sub" id="link-sub"></div>
+    <div class="link-sweep"></div>
+  </div>
 
   <!-- ── Bandeau de démonstration (absent de l'app de production) ──
        Le bandeau nomme l'URL de test, pas celle de production : c'est ici qu'on
@@ -425,12 +454,12 @@
   </div>
 
   <!-- ── System state ── -->
-  <div id="sys-state-card" class="card" style="padding:12px">
+  <div id="sys-state-card" class="card" style="padding:12px" data-needs-stove>
     <button class="sys-btn startup" id="sys-btn" onclick="sysButtonClick()">Démarrage</button>
   </div>
 
   <!-- ── Fault banner ── -->
-  <div id="fault-banner">
+  <div id="fault-banner" data-needs-stove>
     <div class="fault-title">⚠️ DÉFAUT DÉTECTÉ</div>
     <div class="fault-side-badge" id="fault-side-badge">— Côté</div>
     <div class="fault-msg" id="fault-msg-text">Bûche coincée dans la trappe — suivez les étapes ci-dessous</div>
@@ -456,7 +485,7 @@
   </div>
 
   <!-- ── Joint service banner (same slot as the fault banner) ── -->
-  <div id="joint-banner">
+  <div id="joint-banner" data-needs-stove>
     <!-- Vue 1 : choix du côté -->
     <div id="joint-choose">
       <div class="joint-title">🔧 Changer le joint — quel côté ?</div>
@@ -480,7 +509,7 @@
        Entièrement pilotée par le champ « fclose » de status/full : le firmware est
        seul propriétaire de l'état, l'app ne fait que l'afficher. Elle réapparaît
        donc telle quelle après un rechargement de l'app ou une reconnexion. -->
-  <div id="fclose-banner">
+  <div id="fclose-banner" data-needs-stove>
     <!-- Vue 1 : fermeture en cours -->
     <div id="fclose-progress" style="display:none">
       <div class="joint-title">⇲ Fermeture forcée en cours</div>
@@ -534,7 +563,7 @@
         <div class="temp-small-label" id="ble-room-label">Température actuelle</div>
       </div>
       <div class="main-temp-half">
-        <div class="wanted-controls">
+        <div class="wanted-controls" data-needs-stove>
           <button class="adj-btn" onclick="adjustRoom(-1)">−</button>
           <div id="room-val">T1</div>
           <button class="adj-btn" onclick="adjustRoom(+1)">+</button>
@@ -568,7 +597,7 @@
         <div class="cart-title">Gauche</div>
         <div class="bars" id="bars-left"></div>
         <div class="cart-count" id="count-left">—</div>
-        <div class="cart-btn-stack">
+        <div class="cart-btn-stack" data-needs-stove>
           <button class="btn btn-green"  onclick="unlockDoor('l')">Déverrouiller</button>
           <button class="btn btn-orange" onclick="publish('cmd/motor_home',mapSide('l'))">Rembobiner</button>
           <button class="btn btn-brown"  onclick="updateLogCount('l')">Mettre à jour</button>
@@ -587,7 +616,7 @@
         <div class="cart-title">Droite</div>
         <div class="bars" id="bars-right"></div>
         <div class="cart-count" id="count-right">—</div>
-        <div class="cart-btn-stack">
+        <div class="cart-btn-stack" data-needs-stove>
           <button class="btn btn-green"  onclick="unlockDoor('r')">Déverrouiller</button>
           <button class="btn btn-orange" onclick="publish('cmd/motor_home',mapSide('r'))">Rembobiner</button>
           <button class="btn btn-brown"  onclick="updateLogCount('r')">Mettre à jour</button>
@@ -604,7 +633,7 @@
       <span class="arrow" id="options-arrow">▼</span>
     </div>
     <div class="settings-body" id="options-body">
-      <div>
+      <div data-needs-stove>
         <!-- ── Rapport quotidien des bûches ──
              Envoyé par le poêle via ntfy. Le réglage vit dans le poêle (NVS) :
              on l'envoie par cmd/daily_report et on affiche ce qu'il renvoie sur
@@ -748,7 +777,7 @@
       <!-- Rappels de maintenance -->
       <div>
         <div class="settings-section">Rappels de maintenance</div>
-        <div class="gap-col">
+        <div class="gap-col" data-needs-stove>
           <div class="maint-item">
             <div class="maint-row">
               <span class="maint-lbl">Remplacer le joint</span>
@@ -837,7 +866,7 @@
           </div>
 
 
-          <button class="btn btn-sm btn-full" id="push-test-btn" style="background:#5a9e6f;color:#fff" onclick="testPushNotification()">🧪 Envoyer une notification test</button>
+          <button class="btn btn-sm btn-full" id="push-test-btn" data-needs-stove style="background:#5a9e6f;color:#fff" onclick="testPushNotification()">🧪 Envoyer une notification test</button>
           <div id="push-notif-status" style="font-size:.8rem;margin-top:2px;opacity:.7;text-align:center"></div>
         </div>
       </div>
@@ -851,7 +880,7 @@
            (room_sensor_mac), jamais la clé. -->
       <div>
         <div class="settings-section">Thermomètre de la pièce (Bluetooth)</div>
-        <div class="gap-col">
+        <div class="gap-col" data-needs-stove>
           <input type="text" id="room-sensor-cfg" class="conn-input" autocomplete="off" spellcheck="false" placeholder="MAC + clé, ex. A4:C1:38:B7:C0:40 af3dbf6ccf5cdf967a415b5b986ca8ee" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:.78rem"/>
           <button class="btn btn-brown btn-sm btn-full" onclick="saveRoomSensorConfig()">Connecter le thermomètre</button>
           <div style="font-size:.78rem;color:#8B4513;text-align:center">Thermomètre actuel : <span id="room-sensor-mac-val">—</span></div>
@@ -890,7 +919,7 @@
         <div class="gap-col">
           <details class="set-fold">
             <summary>Changer le mot de passe</summary>
-            <div class="set-fold-body gap-col">
+            <div class="set-fold-body gap-col" data-needs-stove>
               <input class="conn-input" id="pw-current" placeholder="Mot de passe actuel" type="password"/>
               <input class="conn-input" id="pw-new"     placeholder="Nouveau mot de passe" type="password"/>
               <input class="conn-input" id="pw-confirm" placeholder="Confirmer le nouveau mot de passe" type="password"/>
@@ -932,7 +961,7 @@
       <!-- Zone avancée : actions rares, en dernier -->
       <div>
         <div class="settings-section danger">Zone avancée</div>
-        <div class="danger-zone">
+        <div class="danger-zone" data-needs-stove>
           <button class="btn btn-outline-red btn-full" id="fclose-btn" onclick="forceClose()">⇲ Fermeture forcée des trappes</button>
           <p class="dz-note">Si une trappe est restée ouverte après un redémarrage. Portes fermées ; environ 40 s ; le poêle s'arrête s'il rencontre un obstacle.</p>
           <button class="btn btn-outline-red btn-full" onclick="resetESP()">↺ Redémarrer le poêle</button>
@@ -963,15 +992,6 @@
 
 <!-- ── Toast ── -->
 <div id="toast"></div>
-
-<!-- ── Offline overlay ── -->
-<div id="offline-overlay">
-  <div class="offline-box">
-    <h2>Déconnecté</h2>
-    <p>Connexion au courtier perdue.<br>Reconnexion automatique…</p>
-    <button class="btn btn-brown btn-full" onclick="reconnect()">Réessayer</button>
-  </div>
-</div>
 
 <!-- ── Modale nombre de bûches ── -->
 <div id="log-modal" onclick="if(event.target===this)closeLogModal()">
@@ -1073,10 +1093,12 @@ let agreeOpened      = false;             // conditions ouvertes pendant cette s
 //                   du champ since_sec. Indispensable : le firmware ne publie
 //                   reload_req que sur changement, donc since_sec est figé à la
 //                   réception et c'est l'app qui doit faire avancer l'horloge.
-// stoveSeenMs     : dernière preuve de vie du poêle (status/full arrive à 1 Hz).
-//                   reload_req est RETENU : sans ce garde-fou, se connecter à un
-//                   poêle éteint rejouerait une demande vieille de plusieurs
-//                   jours et l'app réclamerait une bûche pour un foyer froid.
+// stoveSeenMs     : dernière preuve de vie du poêle — heartbeat (10 s) ou
+//                   status/full NON retenus, voir markStoveSeen(). Ouvre le
+//                   verrou des commandes (updateLinkUi()) et protège reload_req,
+//                   qui est RETENU : sans ce garde-fou, se connecter à un poêle
+//                   éteint rejouerait une demande vieille de plusieurs jours et
+//                   l'app réclamerait une bûche pour un foyer froid.
 let feedManual       = false;
 let reloadPending    = false;
 let reloadPromptNum  = 0;
@@ -1089,9 +1111,6 @@ let fcloseState      = 0;      // status/full fclose — voir applyForceClose()
 let client           = null;
 let prefix           = '';
 let roomTemp         = 18;   // T1 par défaut (= consigne 275 °C côté poêle)
-let lastHbTime       = 0;
-let hbTimer          = null;
-let offlineTimer     = null;
 let settingsOpen     = false;
 let optionsOpen      = false;
 let systemState      = 'startup';   // startup | auto | cooldown | fault
@@ -1201,6 +1220,7 @@ window.addEventListener('load', () => {
       connect();
     }
   }
+  initLinkGuard();
   refreshAgreementUi();
   fetchAgreementMeta().then(applyAgreementGate);
   renderBars('left',  0);
@@ -1379,7 +1399,10 @@ function saveAndConnect() {
 
 function connect() {
   prefix = 'WoodMood' + cfg.serial;
-  setDotState('connecting');
+  // Nouvelle connexion, éventuellement vers un autre poêle : la preuve de vie
+  // précédente ne vaut plus rien.
+  stoveSeenMs = 0;
+  linkUpSince = 0;
 
   if (client) { try { client.end(true); } catch(e){} }
 
@@ -1393,11 +1416,10 @@ function connect() {
     rejectUnauthorized: false
   });
 
+  updateLinkUi();
+
   client.on('connect', () => {
-    setDotState('connected');   // orange — en attente du heartbeat
-    clearTimeout(offlineTimer);
-    offlineTimer = null;
-    document.getElementById('offline-overlay').classList.remove('show');
+    updateLinkUi();   // orange — courtier OK, en attente du poêle
     client.subscribe(prefix + '/status/#');
     client.subscribe(prefix + '/schedule');
     // NOTE : ni l'état activé/désactivé ni la courbe ne sont re-publiés ici. Le
@@ -1434,28 +1456,25 @@ function connect() {
   });
 
   client.on('message',   onMessage);
-  client.on('offline',   () => { setDotState('disconnected'); showOffline(); });
+  client.on('offline',   updateLinkUi);
+  client.on('close',     updateLinkUi);
   client.on('error',     (err) => {
     // Surface the real reason (e.g. "Connection refused: Not authorized" for bad
     // credentials) instead of silently showing "déconnecté".
     const reason = (err && err.message) ? err.message : String(err);
     console.error('[MQTT] connection error:', reason, err);
     showToast('Échec MQTT : ' + reason);
-    setDotState('disconnected');
+    updateLinkUi();
   });
-  client.on('reconnect', () => { setDotState('connecting');   });
+  client.on('reconnect', updateLinkUi);
 }
 
 function disconnect() {
   if (client) { try { client.end(true); } catch(e){} client = null; }
-  setDotState('disconnected');
+  stoveSeenMs = 0;
+  updateLinkUi();
   document.getElementById('conn-card').style.display = '';
   fillForm();
-}
-
-function reconnect() {
-  document.getElementById('offline-overlay').classList.remove('show');
-  connect();
 }
 
 function setDotState(s) {
@@ -1463,24 +1482,162 @@ function setDotState(s) {
   const label = document.getElementById('status-label');
   dot.className = 'status-dot';
   if      (s === 'connecting') { dot.classList.add('connecting'); label.textContent = 'Connexion…';   }
-  else if (s === 'connected')  { dot.classList.add('connected');  label.textContent = 'Connecté';     }
+  else if (s === 'connected')  { dot.classList.add('connected');  label.textContent = 'Poêle hors ligne'; }
   else if (s === 'alive')      { dot.classList.add('alive');      label.textContent = 'Connecté';     }
   else                         {                                  label.textContent = 'Déconnecté';   }
 }
 
-function showOffline() {
-  if (lastHbTime === 0 || offlineTimer) return;
-  offlineTimer = setTimeout(() => {
-    offlineTimer = null;
-    document.getElementById('offline-overlay').classList.add('show');
-  }, 5000);
+// ============================================================
+// LIEN AVEC LE POÊLE — bandeau « Connexion… » et verrou des commandes
+// ============================================================
+// Être connecté au courtier ne prouve PAS que le poêle écoute : les commandes
+// (cmd/…) ne sont pas retenues, donc une commande publiée pendant que le poêle
+// est hors ligne — ou avant qu'il ait répondu, juste après l'ouverture de
+// l'app — est perdue sans aucun message d'erreur. C'était le cas « j'ai activé
+// le mode silencieux et rien ne s'est passé ». Tant que le poêle n'a pas donné
+// signe de vie récemment, l'app affiche donc un bandeau « Connexion au poêle… »
+// et bloque toutes les zones marquées data-needs-stove (et publish()).
+//
+// Preuve de vie = heartbeat (toutes les 10 s) ou status/full, NON retenus.
+// status/full seul ne suffit plus : hors mode live il n'arrive que toutes les
+// 30 s. Les messages retenus (status/online, schedule, reload_req…) sont rejoués
+// par le courtier à chaque connexion et ne prouvent rien.
+const STOVE_STALE_MS     = 25000;  // 2 heartbeats manqués + marge
+const STOVE_SLOW_HINT_MS = 30000;  // au-delà, on explique quoi vérifier
+const LINK_OK_FLASH_MS   = 1800;   // « Poêle connecté » avant de masquer le bandeau
+const LINK_WAIT_TOAST    = 'Patientez : connexion au poêle en cours…';
+const RESUME_PROBE_MS    = 12000;  // retour au premier plan : délai avant reconnexion forcée
+
+let linkWaitSince = 0;     // début de l'attente en cours (0 = lien OK)
+let linkUpSince   = 0;     // le lien est OK depuis… (0 = non)
+let linkOkTimer   = null;
+let resumeProbe   = null;
+
+function stoveLive() {
+  return !!(client && client.connected) &&
+         stoveSeenMs > 0 && (Date.now() - stoveSeenMs) < STOVE_STALE_MS;
+}
+
+function markStoveSeen() {
+  stoveSeenMs = Date.now();
+  clearTimeout(resumeProbe);
+  resumeProbe = null;
+  if (!linkUpSince) updateLinkUi();   // passage hors ligne → en ligne : immédiat
+}
+
+function updateLinkUi() {
+  const bar    = document.getElementById('link-bar');
+  const text   = document.getElementById('link-text');
+  const sub    = document.getElementById('link-sub');
+  const broker = !!(client && client.connected);
+  const live   = stoveLive();
+
+  document.body.classList.toggle('link-down', !live);
+
+  // Pas encore identifié : c'est le panneau de connexion qui parle, pas de bandeau.
+  if (!client) {
+    setDotState('disconnected');
+    clearTimeout(linkOkTimer);
+    bar.classList.remove('show', 'ok');
+    linkWaitSince = 0;
+    linkUpSince   = 0;
+    return;
+  }
+
+  if (live) {
+    setDotState('alive');
+    if (!linkUpSince) {
+      linkUpSince = Date.now();
+      // Le bandeau était affiché : on confirme brièvement avant de le retirer.
+      if (bar.classList.contains('show')) {
+        const toast = document.getElementById('toast');
+        if (toast.textContent === LINK_WAIT_TOAST) toast.classList.remove('show');
+        bar.classList.add('ok');
+        text.textContent = 'Poêle connecté';
+        sub.textContent  = '';
+        clearTimeout(linkOkTimer);
+        linkOkTimer = setTimeout(() => bar.classList.remove('show', 'ok'), LINK_OK_FLASH_MS);
+      }
+    }
+    linkWaitSince = 0;
+    return;
+  }
+
+  setDotState(broker ? 'connected' : 'connecting');
+  linkUpSince = 0;
+  if (!linkWaitSince) linkWaitSince = Date.now();
+  clearTimeout(linkOkTimer);
+  bar.classList.remove('ok');
+  bar.classList.add('show');
+
+  const slow = (Date.now() - linkWaitSince) >= STOVE_SLOW_HINT_MS;
+  if (!broker) {
+    text.textContent = 'Connexion au serveur';
+    sub.textContent  = slow
+      ? 'Pas de réseau ? Vérifiez la connexion internet de ce téléphone.'
+      : 'Les réglages seront disponibles dès que le poêle répondra.';
+  } else {
+    text.textContent = 'Connexion au poêle';
+    sub.textContent  = slow
+      ? 'Le poêle ne répond pas. Vérifiez qu\'il est sous tension et que sa box internet fonctionne.'
+      : 'Les réglages seront disponibles dès que le poêle répondra.';
+  }
+}
+
+// Une touche sur une zone bloquée : on secoue le bandeau pour montrer pourquoi.
+function nudgeLinkBar() {
+  const bar = document.getElementById('link-bar');
+  if (!client) { showToast('Connectez-vous d\'abord à votre poêle'); return; }
+  bar.classList.remove('nudge');
+  void bar.offsetWidth;   // relance l'animation
+  bar.classList.add('nudge');
+  showToast(LINK_WAIT_TOAST);
+}
+
+function initLinkGuard() {
+  // Bloque toute interaction dans une zone data-needs-stove tant que le poêle
+  // n'est pas en ligne. Phase de capture sur window : l'événement est arrêté
+  // avant d'atteindre les onclick/onchange existants. pointerdown n'empêche pas
+  // le défilement natif ; il coupe en revanche le glisser de la courbe.
+  const block = (e) => {
+    if (!document.body.classList.contains('link-down')) return;
+    const zone = e.target.closest && e.target.closest('[data-needs-stove]');
+    if (!zone) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'focusin' && e.target.blur) e.target.blur();
+    if (e.type === 'click' || (e.type === 'keydown' && (e.key === 'Enter' || e.key === ' '))) nudgeLinkBar();
+  };
+  ['click', 'pointerdown', 'mousedown', 'keydown', 'focusin', 'change', 'input']
+    .forEach(t => window.addEventListener(t, block, true));
+
+  setInterval(updateLinkUi, 1000);
+
+  // Retour de l'app au premier plan : le téléphone a souvent coupé la socket
+  // sans que mqtt.js le sache encore (keepalive 60 s). On réévalue tout de
+  // suite — le bandeau réapparaît si le dernier signe de vie est trop vieux —
+  // puis, si aucun heartbeat n'arrive vite, on force une reconnexion.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    updateLinkUi();
+    if (!client || stoveLive()) return;
+    clearTimeout(resumeProbe);
+    resumeProbe = setTimeout(() => {
+      resumeProbe = null;
+      if (client && client.connected && !stoveLive()) {
+        try { client.reconnect(); } catch (e) {}
+      }
+    }, RESUME_PROBE_MS);
+  });
+  updateLinkUi();
 }
 
 // ============================================================
 // MQTT MESSAGES
 // ============================================================
-function onMessage(topic, payloadBuf) {
+function onMessage(topic, payloadBuf, packet) {
   const payload = payloadBuf.toString();
+  const retained = !!(packet && packet.retain);
   const sub     = topic.replace(prefix + '/', '');
 
   if (sub === 'schedule') {
@@ -1500,15 +1657,17 @@ function onMessage(topic, payloadBuf) {
   }
 
   if (sub === 'status/heartbeat') {
+    if (retained) return;   // un heartbeat rejoué par le courtier ne prouve rien
+    markStoveSeen();        // avant publish() : c'est lui qui ouvre le verrou
     publish('cmd/heartbeat_ack', '1');
-    lastHbTime = Date.now();
-    setDotState('alive');
-    clearTimeout(hbTimer);
-    hbTimer = setTimeout(() => setDotState('connected'), 31000);
     return;
   }
 
-  if (sub === 'status/full')       { try { applyFull(JSON.parse(payload)); } catch(e){} return; }
+  if (sub === 'status/full') {
+    if (!retained) markStoveSeen();
+    try { applyFull(JSON.parse(payload)); } catch(e){}
+    return;
+  }
   if (sub === 'status/fault')      { setFault(payload === '1'); return; }
   if (sub === 'status/fault_msg')  { setFaultMsg(payload);      return; }
   if (sub === 'status/fault_side') { const _s = payload.toLowerCase(); faultSide = (_s === 'right' || _s === 'r') ? 'r' : 'l'; if (faultActive) renderFaultPhase(); return; }
@@ -1661,9 +1820,6 @@ function applyFull(d) {
     if (rv) rv.classList.toggle('sched-driven',
                                 d.room_src === 'sched' && !isLocked('room_temp'));
   }
-  // Preuve de vie : status/full arrive à 1 Hz tant que le poêle est en ligne.
-  // Sert à ne pas afficher une demande de bûche retenue par un poêle éteint.
-  stoveSeenMs = Date.now();
   if (d.feed_manual !== undefined && !isLocked('feed_mode')) {
     applyFeedMode(!!d.feed_manual);
   }
@@ -1985,9 +2141,6 @@ function setFaultMsg(msg) {
 // bûche est due change de conséquence : rien ne bouge, le poêle sonne et
 // demande. C'est ReloadPrompt qui porte cette demande, côté firmware.
 
-// Au-delà, un status/full à 1 Hz est considéré perdu et le poêle hors ligne.
-const STOVE_STALE_MS      = 15000;
-
 function setFeedMode(on) {
   // Verrou optimiste : cmd/feed_mode n'est PAS retenu (le firmware garde le
   // mode en NVS et le réémet dans status/full), donc l'écho met un cycle à
@@ -2052,8 +2205,7 @@ function renderReloadPrompt() {
   // status/reload_req est retenu : le courtier le rejoue à chaque connexion,
   // même si le poêle est débranché depuis. Sans ce test, ouvrir l'app sur un
   // poêle éteint réclamerait une bûche pour un foyer froid depuis longtemps.
-  const stoveLive = stoveSeenMs > 0 && (Date.now() - stoveSeenMs) < STOVE_STALE_MS;
-  if (!reloadPending || !stoveLive) { banner.classList.remove('show'); return; }
+  if (!reloadPending || !stoveLive()) { banner.classList.remove('show'); return; }
   banner.classList.add('show');
 
   const elapsedMin = Math.floor((Date.now() - reloadRaisedMs) / 60000);
@@ -2083,8 +2235,11 @@ function renderBars(side, count) {
 // COMMANDES
 // ============================================================
 function publish(subtopic, payload) {
-  if (!client || !client.connected) { alert('Non connecté au courtier'); return; }
+  // Filet de sécurité derrière le verrou de l'interface : une commande non
+  // retenue envoyée sans le poêle en ligne serait perdue en silence.
+  if (!stoveLive()) { nudgeLinkBar(); return false; }
   client.publish(prefix + '/' + subtopic, String(payload), { qos:1 });
+  return true;
 }
 
 function mapSide(s) { return SWAP_SIDES ? (s === 'l' ? 'r' : 'l') : s; }
@@ -2587,7 +2742,7 @@ const FCLOSE_IDLE = 0, FCLOSE_LEFT = 1, FCLOSE_RIGHT = 2,
 function forceClose(fromBanner = false) {
   // Garde-fous en « échec fermé », comme changerJoint() : on préfère refuser à
   // tort que lancer un actionneur alors que le poêle n'est pas en état.
-  if (!(stoveSeenMs > 0 && (Date.now() - stoveSeenMs) < STOVE_STALE_MS)) {
+  if (!stoveLive()) {
     alert('Le poêle ne répond pas pour le moment. Attendez d\'être connecté avant de lancer une fermeture forcée.');
     return;
   }
@@ -3219,7 +3374,7 @@ async function disablePushNotifications() {
 // d'afficher un faux succès.
 async function testPushNotification() {
   const btn = document.getElementById('push-test-btn');
-  if (!client || !client.connected) {
+  if (!stoveLive()) {
     btn.textContent = '⚠️ Poêle hors ligne — test impossible';
     setTimeout(() => { btn.textContent = '🧪 Envoyer une notification test'; }, 5000);
     return;
