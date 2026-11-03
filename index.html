@@ -352,15 +352,20 @@
 
     /* ── Programmation de température ── */
     .sched-pt{cursor:ns-resize}
-    /* ── Bandeaux des modes en cours (haut de page) ──
-       Juste le nom du mode, un bandeau par mode actif. Couleurs choisies pour
-       ne jamais ressembler à la bannière de défaut rouge. */
+    /* ── Modes en cours ──
+       Juste le nom du mode. Chargement manuel = bandeau en haut de page ;
+       silencieux et programmation = pastilles pleines dans la carte
+       température. Couleurs choisies pour ne jamais ressembler au défaut rouge. */
     .mode-banner{display:none;border-radius:14px;padding:12px 16px;color:#fff;
       font-size:1rem;font-weight:700;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.35)}
     .mode-banner.active{display:block}
-    .mode-banner.silence{background:#2b3a67}
-    .mode-banner.feed   {background:#b9770e}
-    .mode-banner.sched  {background:#1e6b5c}
+    .mode-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:6px}
+    .mode-chip{display:none;border-radius:20px;padding:6px 14px;color:#fff;
+      font-size:.85rem;font-weight:700;white-space:nowrap;margin-bottom:10px}
+    .mode-chip.active{display:inline-block}
+    .mode-chip.silence{background:#2b3a67}
+    .mode-banner.feed{background:#b9770e}
+    .mode-chip.sched{background:#1e6b5c}
     .sched-tabs{display:flex;gap:4px;background:#f0e6da;border-radius:9px;padding:3px;margin-bottom:10px}
     .sched-tab{flex:1;border:0;background:transparent;color:#8a6a4f;font-size:.8rem;font-weight:700;
       padding:6px 0;border-radius:7px;cursor:pointer;transition:.2s;font-family:inherit}
@@ -461,13 +466,9 @@
     <button class="sys-btn startup" id="sys-btn" onclick="sysButtonClick()">Démarrage</button>
   </div>
 
-  <!-- ── Modes en cours ──
-       Silencieux (status/silence, renderSilence()), chargement manuel
-       (status/full feed_manual, applyFeedMode()) et programmation
-       (sched_enabled). Classe .active = bandeau affiché. -->
-  <div class="mode-banner silence" id="silence-badge">🌙 Mode silencieux</div>
+  <!-- ── Chargement manuel en cours (status/full feed_manual, applyFeedMode()) ──
+       Classe .active = bandeau affiché. -->
   <div class="mode-banner feed" id="feed-badge">🪵 Chargement manuel</div>
-  <div class="mode-banner sched" id="sched-badge">📅 Programmation</div>
 
   <!-- ── Fault banner ── -->
   <div id="fault-banner" data-needs-stove>
@@ -581,6 +582,12 @@
         </div>
         <div class="temp-small-label">Température souhaitée</div>
       </div>
+    </div>
+    <!-- Modes en cours : silencieux (status/silence, renderSilence()) et
+         programmation (sched_enabled). Classe .active = pastille affichée. -->
+    <div class="mode-chips">
+      <span class="mode-chip silence" id="silence-badge">🌙 Mode silencieux</span>
+      <span class="mode-chip sched" id="sched-badge">📅 Programmation</span>
     </div>
     <!-- Secondaire : internes du poêle (discrets) -->
     <div class="stove-tech-row">
