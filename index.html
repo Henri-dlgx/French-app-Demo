@@ -352,12 +352,15 @@
 
     /* ── Programmation de température ── */
     .sched-pt{cursor:ns-resize}
-    .sched-badge{font-size:.62rem;font-weight:700;color:#8B4513;background:rgba(139,69,19,.1);
-      border-radius:20px;padding:1px 7px;margin-top:3px;display:none;letter-spacing:.02em;white-space:nowrap}
-    .sched-badge.active{display:inline-block}
-    .mode-badges{display:flex;flex-wrap:wrap;justify-content:center;gap:4px;margin-top:3px}
-    .mode-badges .sched-badge{margin-top:0}
-    .sched-badge.feed{background:#fff;color:#8B4513;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+    /* ── Bandeaux des modes en cours (haut de page) ──
+       Juste le nom du mode, un bandeau par mode actif. Couleurs choisies pour
+       ne jamais ressembler à la bannière de défaut rouge. */
+    .mode-banner{display:none;border-radius:14px;padding:12px 16px;color:#fff;
+      font-size:1rem;font-weight:700;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    .mode-banner.active{display:block}
+    .mode-banner.silence{background:#2b3a67}
+    .mode-banner.feed   {background:#b9770e}
+    .mode-banner.sched  {background:#1e6b5c}
     .sched-tabs{display:flex;gap:4px;background:#f0e6da;border-radius:9px;padding:3px;margin-bottom:10px}
     .sched-tab{flex:1;border:0;background:transparent;color:#8a6a4f;font-size:.8rem;font-weight:700;
       padding:6px 0;border-radius:7px;cursor:pointer;transition:.2s;font-family:inherit}
@@ -457,6 +460,14 @@
   <div id="sys-state-card" class="card" style="padding:12px" data-needs-stove>
     <button class="sys-btn startup" id="sys-btn" onclick="sysButtonClick()">Démarrage</button>
   </div>
+
+  <!-- ── Modes en cours ──
+       Silencieux (status/silence, renderSilence()), chargement manuel
+       (status/full feed_manual, applyFeedMode()) et programmation
+       (sched_enabled). Classe .active = bandeau affiché. -->
+  <div class="mode-banner silence" id="silence-badge">🌙 Mode silencieux</div>
+  <div class="mode-banner feed" id="feed-badge">🪵 Chargement manuel</div>
+  <div class="mode-banner sched" id="sched-badge">📅 Programmation</div>
 
   <!-- ── Fault banner ── -->
   <div id="fault-banner" data-needs-stove>
@@ -569,14 +580,6 @@
           <button class="adj-btn" onclick="adjustRoom(+1)">+</button>
         </div>
         <div class="temp-small-label">Température souhaitée</div>
-        <!-- Modes en cours, côte à côte : « Programmé » (courbe de température)
-             et « Manuel » (chargement manuel des bûches, status/full feed_manual,
-             via applyFeedMode()). Le second est plein pour rester bien visible :
-             le poêle ne chargera rien tout seul. -->
-        <div class="mode-badges">
-          <div class="sched-badge" id="sched-badge">📅 Programmé</div>
-          <div class="sched-badge feed" id="feed-badge" title="Chargement manuel des bûches">🪵 Manuel</div>
-        </div>
       </div>
     </div>
     <!-- Secondaire : internes du poêle (discrets) -->
@@ -2378,6 +2381,8 @@ function applySilence(payload) {
 
 // Ligne d'état sous l'interrupteur : vide quand le mode est coupé.
 function renderSilence() {
+  const badge = document.getElementById('silence-badge');
+  if (badge) badge.classList.toggle('active', silence.on);
   const el = document.getElementById('silence-status');
   if (!el) return;
   if (!silence.on) { el.textContent = ''; return; }
