@@ -1418,6 +1418,7 @@ function connect() {
   // précédente ne vaut plus rien.
   stoveSeenMs = 0;
   linkUpSince = 0;
+  liveLeaseSentMs = 0;
   linkRefused = false;
   clearTimeout(refusedRetry);
 
@@ -1560,10 +1561,38 @@ function stoveLive() {
 }
 
 function markStoveSeen() {
+  const wasLive = stoveLive();
   stoveSeenMs = Date.now();
   clearTimeout(resumeProbe);
   resumeProbe = null;
   if (!linkUpSince) updateLinkUi();   // passage hors ligne → en ligne : immédiat
+  // Poêle (re)venu en ligne : il a pu redémarrer et perdre le bail, on le renvoie
+  // tout de suite. Sinon chaque heartbeat (10 s) sert d'horloge de renouvellement.
+  renewLiveLease(!wasLive);
+}
+
+// ============================================================
+// MODE LIVE TANT QUE L'APP EST REGARDÉE
+// ============================================================
+// Hors mode live, le poêle n'envoie status/full que toutes les 30 s (quota EMQX /
+// Supabase) : la température paraît figée. Tant que l'app est à l'écran, on lui
+// demande donc status/full chaque seconde via cmd/live, sous forme de BAIL court
+// renouvelé : « 2 » = 2 minutes, renvoyé toutes les minutes.
+// - Jamais de « 0 » à la fermeture : un téléphone suspend la page sans prévenir
+//   (le message ne partirait pas), et un « 0 » couperait le live d'un AUTRE
+//   téléphone qui regarde le même poêle. On arrête simplement de renouveler :
+//   le poêle repasse seul à 30 s au plus 2 min après.
+// - Jamais « 1 » : pour le firmware, « 1 » veut dire 30 minutes, pas 1.
+const LIVE_LEASE_MIN   = 2;      // durée demandée à chaque envoi (minutes)
+const LIVE_RENEW_MS    = 60000;  // renouvellement, bien avant l'expiration
+let   liveLeaseSentMs  = 0;      // dernier cmd/live envoyé (0 = aucun sur ce client)
+
+function renewLiveLease(force) {
+  if (document.visibilityState !== 'visible') return;
+  if (!stoveLive()) return;   // commande non retenue : perdue si le poêle n'écoute pas
+  if (!force && Date.now() - liveLeaseSentMs < LIVE_RENEW_MS) return;
+  client.publish(prefix + '/cmd/live', String(LIVE_LEASE_MIN), { qos:1 });
+  liveLeaseSentMs = Date.now();
 }
 
 function updateLinkUi() {
@@ -1685,6 +1714,10 @@ function initLinkGuard() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     updateLinkUi();
+    // Retour à l'écran : relancer le live tout de suite (le bail a pu expirer
+    // pendant que l'app était cachée). Si le poêle n'est pas encore en ligne,
+    // markStoveSeen() s'en chargera au premier signe de vie.
+    renewLiveLease(true);
     if (!client || stoveLive()) return;
     clearTimeout(resumeProbe);
     resumeProbe = setTimeout(() => {
