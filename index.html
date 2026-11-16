@@ -375,6 +375,26 @@
     .sched-tab{flex:1;border:0;background:transparent;color:#8a6a4f;font-size:.8rem;font-weight:700;
       padding:6px 0;border-radius:7px;cursor:pointer;transition:.2s;font-family:inherit}
     .sched-tab.active{background:#8B4513;color:#fff;box-shadow:0 1px 3px rgba(139,69,19,.3)}
+    /* Programmation activée : le bloc reste ouvert, sans flèche ni repli */
+    #sched-fold.pinned>summary{cursor:default}
+    #sched-fold.pinned>summary::after{display:none}
+    /* Verrou de la courbe : verrouillée = pâle + défilement natif ; déverrouillée = glisser */
+    .sched-head{display:flex;gap:6px;align-items:stretch;margin-bottom:10px}
+    .sched-head .sched-tabs{flex:1;margin-bottom:0}
+    .sched-lock{flex:none;width:40px;min-height:34px;border:0;border-radius:9px;padding:0;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;background:#8B4513;color:#fff;
+      box-shadow:0 1px 3px rgba(139,69,19,.3);transition:background .2s,color .2s}
+    .sched-lock svg{width:18px;height:18px}
+    .sched-lock .ic-closed{display:none}
+    #sched-editor.locked .sched-lock{background:#f0e6da;color:#8a6a4f;box-shadow:none}
+    #sched-editor.locked .sched-lock .ic-closed{display:block}
+    #sched-editor.locked .sched-lock .ic-open{display:none}
+    #schedule-svg{touch-action:none;transition:opacity .25s,filter .25s}
+    #sched-editor.locked #schedule-svg{touch-action:pan-y;opacity:.45;filter:grayscale(.6)}
+    #sched-editor.locked .sched-pt{cursor:default}
+    .sched-lock.nudge{animation:lockNudge .5s}
+    @keyframes lockNudge{0%,100%{transform:none}20%{transform:rotate(-14deg) scale(1.12)}
+      40%{transform:rotate(12deg) scale(1.12)}60%{transform:rotate(-8deg)}80%{transform:rotate(5deg)}}
 
     /* ── Toast ── */
     #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
@@ -675,15 +695,33 @@
           <span style="font-size:.85rem;font-weight:600;color:#5a3015">Activer la programmation</span>
           <label class="tgl"><input type="checkbox" id="tog-sched-enable" onchange="setSchedEnabled(this.checked)"><span class="tgl-sl"></span></label>
         </div>
-        <div class="settings-section">Programmation de température</div>
-        <div style="font-size:.78rem;color:#888;margin-bottom:10px">Faites glisser les points pour régler le confort par tranche de 2h (T1–T6)</div>
-        <div class="sched-tabs">
-          <button type="button" class="sched-tab active" id="sched-tab-week"    onclick="setSchedEditMode('week')">Semaine</button>
-          <button type="button" class="sched-tab"        id="sched-tab-weekend" onclick="setSchedEditMode('weekend')">Week-end</button>
-        </div>
-        <svg id="schedule-svg" width="100%" viewBox="-8 0 340 155" style="display:block;touch-action:none;overflow:visible"></svg>
-        <div id="sched-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
-        <button class="btn btn-brown btn-sm btn-full" style="margin-top:8px" onclick="saveSchedule()">Enregistrer et appliquer</button>
+        <!-- Repliée tant que la programmation est désactivée ; toujours ouverte
+             (non repliable) quand elle est activée — voir syncSchedFold(). -->
+        <details class="set-fold" id="sched-fold">
+          <summary onclick="schedFoldSummaryClick(event)">Programmation de température</summary>
+          <div class="set-fold-body">
+            <!-- Courbe verrouillée par défaut : pâlie, et un doigt posé dessus fait
+                 défiler la page. Le cadenas la déverrouille ; elle se reverrouille
+                 dès qu'elle sort de l'écran — voir setSchedLocked(). -->
+            <div id="sched-editor" class="locked">
+              <div id="sched-hint" style="font-size:.78rem;color:#888;margin-bottom:10px">Touchez le cadenas pour modifier la courbe</div>
+              <div class="sched-head">
+                <div class="sched-tabs">
+                  <button type="button" class="sched-tab active" id="sched-tab-week"    onclick="setSchedEditMode('week')">Semaine</button>
+                  <button type="button" class="sched-tab"        id="sched-tab-weekend" onclick="setSchedEditMode('weekend')">Week-end</button>
+                </div>
+                <button type="button" class="sched-lock" id="sched-lock" onclick="toggleSchedLock()"
+                        aria-pressed="false" aria-label="Déverrouiller la courbe pour la modifier">
+                  <svg class="ic-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                  <svg class="ic-open"   viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.6-1.7"/></svg>
+                </button>
+              </div>
+              <svg id="schedule-svg" width="100%" viewBox="-8 0 340 155" style="display:block;overflow:visible"></svg>
+            </div>
+            <div id="sched-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
+            <button class="btn btn-brown btn-sm btn-full" style="margin-top:8px" onclick="saveSchedule()">Enregistrer et appliquer</button>
+          </div>
+        </details>
 
         <!-- ── Chargement des bûches ──
              cmd/feed_mode, à ne pas confondre avec cmd/auto_insert_en (le
@@ -1949,6 +1987,7 @@ function applyFull(d) {
       document.getElementById('sched-badge').classList.toggle('active', en);
       const togEl = document.getElementById('tog-sched-enable');
       if (togEl) togEl.checked = en;
+      syncSchedFold();
       updateSchedStatus();
     }
   }
@@ -3039,6 +3078,72 @@ function initSchedule() {
   }
   schedEnabled = localStorage.getItem(LS_SCHED_EN) === '1';
   document.getElementById('sched-badge').classList.toggle('active', schedEnabled);
+  syncSchedFold();
+  initSchedLockGuard();
+}
+
+// Bloc « Programmation de température » : un menu replié quand la programmation
+// est désactivée, toujours ouvert (et non repliable) quand elle est activée.
+// N'est appelé que lorsque l'état change : quelqu'un qui déplie le bloc à la main
+// pendant que c'est désactivé n'est pas refermé à chaque statut du poêle.
+function syncSchedFold() {
+  const f = document.getElementById('sched-fold');
+  if (!f) return;
+  f.classList.toggle('pinned', schedEnabled);
+  f.open = schedEnabled;
+}
+
+function schedFoldSummaryClick(e) {
+  if (schedEnabled) e.preventDefault();   // activée : on ne replie pas
+}
+
+// ── Verrou de la courbe ──
+// Verrouillée (par défaut) : pâlie, les points ne bougent pas et un doigt posé sur
+// la courbe fait défiler la page (touch-action: pan-y). Le cadenas la déverrouille ;
+// elle se reverrouille quand elle sort de l'écran, quand le bloc ou le panneau se
+// referme (même effet : elle n'est plus visible) et quand l'app passe en arrière-plan.
+let schedUnlocked = false;
+
+function setSchedLocked(locked) {
+  schedUnlocked = !locked;
+  if (locked && schedDrag) schedOnUp();
+  const ed = document.getElementById('sched-editor');
+  if (ed) ed.classList.toggle('locked', locked);
+  const btn = document.getElementById('sched-lock');
+  if (btn) {
+    btn.setAttribute('aria-pressed', locked ? 'false' : 'true');
+    btn.setAttribute('aria-label', locked ? 'Déverrouiller la courbe pour la modifier' : 'Verrouiller la courbe');
+  }
+  const hint = document.getElementById('sched-hint');
+  if (hint) hint.textContent = locked
+    ? 'Touchez le cadenas pour modifier la courbe'
+    : 'Faites glisser les points pour régler le confort par tranche de 2h (T1–T6)';
+}
+
+function toggleSchedLock() { setSchedLocked(schedUnlocked); }
+
+// Une touche sur la courbe verrouillée : le cadenas remue pour montrer où toucher.
+function nudgeSchedLock() {
+  const btn = document.getElementById('sched-lock');
+  if (!btn) return;
+  btn.classList.remove('nudge');
+  void btn.offsetWidth;                  // relance l'animation
+  btn.classList.add('nudge');
+}
+
+function initSchedLockGuard() {
+  const ed = document.getElementById('sched-editor');
+  if (ed && 'IntersectionObserver' in window) {
+    // Moins d'un quart visible = l'utilisateur a fait défiler ailleurs.
+    new IntersectionObserver(function(entries) {
+      entries.forEach(function(en) {
+        if (schedUnlocked && en.intersectionRatio < 0.25) setSchedLocked(true);
+      });
+    }, { threshold: [0, 0.25] }).observe(ed);
+  }
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden && schedUnlocked) setSchedLocked(true);
+  });
 }
 
 function toggleOptions() {
@@ -3047,6 +3152,7 @@ function toggleOptions() {
   document.getElementById('options-arrow').classList.toggle('open', optionsOpen);
   if (optionsOpen) {
     document.getElementById('tog-sched-enable').checked = schedEnabled;
+    syncSchedFold();
     schedEditMode = isWeekendDay() ? 'weekend' : 'week';   // ouvrir sur la courbe du jour
     updateSchedTabs();
     renderScheduleSVG();
@@ -3087,6 +3193,7 @@ function setSchedEnabled(on) {
   lockField('sched_enabled');
   localStorage.setItem(LS_SCHED_EN, on ? '1' : '0');
   document.getElementById('sched-badge').classList.toggle('active', on);
+  syncSchedFold();
   updateSchedStatus();
 }
 
@@ -3248,6 +3355,8 @@ function renderScheduleSVG() {
 
   svg.onmousedown  = schedOnDown;
   svg.ontouchstart = schedOnDown;
+  // click ne part que sur une vraie touche, pas sur un défilement
+  svg.onclick = function() { if (!schedUnlocked) nudgeSchedLock(); };
 }
 
 function updateScheduleSVG() {
@@ -3281,6 +3390,9 @@ function svgClientToPoint(svg, clientX, clientY) {
 }
 
 function schedOnDown(e) {
+  // Verrouillée : on laisse passer l'événement sans preventDefault pour que la
+  // page défile sous le doigt.
+  if (!schedUnlocked) return;
   const g = e.target.closest('.sched-pt');
   if (!g) return;
   e.preventDefault();
