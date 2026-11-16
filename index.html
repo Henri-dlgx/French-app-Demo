@@ -392,6 +392,21 @@
     #schedule-svg{touch-action:none;transition:opacity .25s,filter .25s}
     #sched-editor.locked #schedule-svg{touch-action:pan-y;opacity:.45;filter:grayscale(.6)}
     #sched-editor.locked .sched-pt{cursor:default}
+    /* Cartes + / − par créneau, défilement horizontal */
+    .sched-strip{display:flex;gap:6px;overflow-x:auto;scroll-snap-type:x proximity;margin-top:10px;
+      padding:2px 2px 6px;-webkit-overflow-scrolling:touch;scrollbar-width:thin;transition:opacity .25s,filter .25s}
+    .ss-card{flex:0 0 84px;scroll-snap-align:start;background:#fff;border:1.5px solid #ead9c8;border-radius:10px;
+      padding:6px;display:flex;flex-direction:column;gap:5px;text-align:center;transition:background .15s,border-color .15s}
+    .ss-card.sel{border-color:#CD853F;background:#fbf3ea}
+    .ss-time{font-size:.74rem;font-weight:700;color:#8a6a4f;border-radius:5px;padding:2px 0}
+    .ss-card.now .ss-time{background:#8B4513;color:#fff}
+    .ss-btn{height:44px;border:0;border-radius:8px;background:#f0e6da;color:#8B4513;font-size:1.5rem;
+      font-weight:700;line-height:1;cursor:pointer;font-family:inherit;padding:0;touch-action:manipulation}
+    .ss-btn:active{background:#e3d0bb}
+    .ss-btn:disabled{opacity:.3;cursor:default}
+    .ss-val{font-size:1.15rem;font-weight:800;color:#8B4513}
+    #sched-editor.locked .sched-strip{opacity:.45;filter:grayscale(.6)}
+    #sched-editor.locked .ss-btn{cursor:default}
     .sched-lock.nudge{animation:lockNudge .5s}
     @keyframes lockNudge{0%,100%{transform:none}20%{transform:rotate(-14deg) scale(1.12)}
       40%{transform:rotate(12deg) scale(1.12)}60%{transform:rotate(-8deg)}80%{transform:rotate(5deg)}}
@@ -704,7 +719,7 @@
                  défiler la page. Le cadenas la déverrouille ; elle se reverrouille
                  dès qu'elle sort de l'écran — voir setSchedLocked(). -->
             <div id="sched-editor" class="locked">
-              <div id="sched-hint" style="font-size:.78rem;color:#888;margin-bottom:10px">Touchez le cadenas pour modifier la courbe</div>
+              <div id="sched-hint" style="font-size:.78rem;color:#888;margin-bottom:10px">Touchez le cadenas pour modifier la programmation</div>
               <div class="sched-head">
                 <div class="sched-tabs">
                   <button type="button" class="sched-tab active" id="sched-tab-week"    onclick="setSchedEditMode('week')">Semaine</button>
@@ -717,6 +732,10 @@
                 </button>
               </div>
               <svg id="schedule-svg" width="100%" viewBox="-8 0 340 155" style="display:block;overflow:visible"></svg>
+              <!-- Les mêmes 12 créneaux en cartes à gros boutons + / − pour qui trouve
+                   les points trop petits. Défile horizontalement (≈3 cartes visibles),
+                   ouvert sur le créneau en cours. Suit le même verrou que la courbe. -->
+              <div class="sched-strip" id="sched-strip" role="group" aria-label="Réglage par créneau de 2h"></div>
             </div>
             <div id="sched-status" style="font-size:.78rem;color:#8B4513;margin-top:8px;text-align:center;min-height:1.2em"></div>
             <button class="btn btn-brown btn-sm btn-full" style="margin-top:8px" onclick="saveSchedule()">Enregistrer et appliquer</button>
@@ -3116,11 +3135,102 @@ function setSchedLocked(locked) {
   }
   const hint = document.getElementById('sched-hint');
   if (hint) hint.textContent = locked
-    ? 'Touchez le cadenas pour modifier la courbe'
-    : 'Faites glisser les points pour régler le confort par tranche de 2h (T1–T6)';
+    ? 'Touchez le cadenas pour modifier la programmation'
+    : 'Faites glisser les points, ou utilisez + / − sous la courbe (faites défiler les heures)';
+  if (locked && schedSel >= 0) setSchedSel(-1, false);
 }
 
 function toggleSchedLock() { setSchedLocked(schedUnlocked); }
+
+// ── Cartes + / − par créneau ──
+// Même donnée que la courbe (editSched()), juste de plus grosses cibles. Les cartes
+// sont créées une seule fois puis mises à jour : les reconstruire à chaque
+// renderScheduleSVG() (qui suit aussi les /schedule reçus) ferait sauter le
+// défilement horizontal pendant que quelqu'un parcourt les heures.
+let schedSel = -1;   // créneau mis en avant (carte touchée ou point déplacé)
+
+function slotLabel(i) { return (i * 2) + 'h–' + (i * 2 + 2) + 'h'; }
+
+function ensureSchedStrip() {
+  const strip = document.getElementById('sched-strip');
+  if (!strip || strip.childElementCount) return strip;
+  let html = '';
+  for (let i = 0; i < SCHED_SLOTS; i++) {
+    html += '<div class="ss-card" data-idx="' + i + '">'
+          +   '<div class="ss-time">' + slotLabel(i) + '</div>'
+          +   '<button type="button" class="ss-btn" data-d="1" aria-label="Augmenter ' + slotLabel(i) + '">+</button>'
+          +   '<div class="ss-val" aria-live="polite"></div>'
+          +   '<button type="button" class="ss-btn" data-d="-1" aria-label="Baisser ' + slotLabel(i) + '">−</button>'
+          + '</div>';
+  }
+  strip.innerHTML = html;
+  strip.addEventListener('click', schedStripClick);
+  return strip;
+}
+
+function updateSchedStrip() {
+  const strip = ensureSchedStrip();
+  if (!strip) return;
+  const cur = editSched();
+  const editingToday = schedEditMode === (isWeekendDay() ? 'weekend' : 'week');
+  const nowSlot = Math.floor(new Date().getHours() / 2);
+  strip.querySelectorAll('.ss-card').forEach(function(card) {
+    const i = +card.getAttribute('data-idx');
+    card.classList.toggle('now', editingToday && i === nowSlot);
+    card.classList.toggle('sel', i === schedSel);
+    card.querySelector('.ss-val').textContent = tempToLabel(cur[i]);
+    card.querySelector('[data-d="1"]').disabled  = cur[i] >= SCHED_TMAX;
+    card.querySelector('[data-d="-1"]').disabled = cur[i] <= SCHED_TMIN;
+  });
+}
+
+function schedStripClick(e) {
+  const btn = e.target.closest('.ss-btn');
+  if (!btn) return;
+  if (!schedUnlocked) { nudgeSchedLock(); return; }
+  const idx = +btn.closest('.ss-card').getAttribute('data-idx');
+  const cur = editSched();
+  const t   = Math.min(SCHED_TMAX, Math.max(SCHED_TMIN, cur[idx] + (+btn.getAttribute('data-d'))));
+  setSchedSel(idx, false);
+  if (t === cur[idx]) return;
+  cur[idx] = t;
+  updateScheduleSVG();
+  updateSchedStatus();
+}
+
+// Met un créneau en avant sur la courbe (point agrandi) et dans les cartes.
+function setSchedSel(idx, scrollStrip) {
+  schedSel = idx;
+  applySchedSelDot();
+  updateSchedStrip();
+  if (scrollStrip) scrollSchedStripTo(idx, true);
+}
+
+function applySchedSelDot() {
+  const svg = document.getElementById('schedule-svg');
+  if (!svg) return;
+  for (let i = 0; i < SCHED_SLOTS; i++) {
+    const dot = svg.querySelector('.sched-dot-' + i);
+    if (dot) dot.setAttribute('r', i === schedSel ? '7.5' : '5');
+  }
+}
+
+// Centre une carte dans la bande, sans faire défiler la page verticalement.
+function scrollSchedStripTo(idx, smooth) {
+  const strip = ensureSchedStrip();
+  const card  = strip && strip.querySelector('.ss-card[data-idx="' + idx + '"]');
+  if (!card || !strip.clientWidth) return;   // bloc replié : rien à mesurer
+  // Positions à l'écran plutôt qu'offsetLeft : le filtre du mode verrouillé fait de
+  // la bande l'offsetParent des cartes, ce qui fausserait le calcul.
+  const cr = card.getBoundingClientRect(), sr = strip.getBoundingClientRect();
+  const left = strip.scrollLeft + (cr.left - sr.left) - (strip.clientWidth - cr.width) / 2;
+  strip.scrollTo({ left: Math.max(0, left), behavior: smooth ? 'smooth' : 'auto' });
+}
+
+// Ouvre la bande sur le créneau en cours (aussi pour la courbe week-end : même heure).
+function scrollSchedStripToNow() {
+  requestAnimationFrame(function() { scrollSchedStripTo(Math.floor(new Date().getHours() / 2), false); });
+}
 
 // Une touche sur la courbe verrouillée : le cadenas remue pour montrer où toucher.
 function nudgeSchedLock() {
@@ -3132,6 +3242,10 @@ function nudgeSchedLock() {
 }
 
 function initSchedLockGuard() {
+  // Bloc déplié à la main (programmation désactivée) : la bande n'avait pas de
+  // largeur avant, on la recentre sur l'heure en cours maintenant qu'elle en a.
+  const fold = document.getElementById('sched-fold');
+  if (fold) fold.addEventListener('toggle', function() { if (fold.open) scrollSchedStripToNow(); });
   const ed = document.getElementById('sched-editor');
   if (ed && 'IntersectionObserver' in window) {
     // Moins d'un quart visible = l'utilisateur a fait défiler ailleurs.
@@ -3157,6 +3271,7 @@ function toggleOptions() {
     updateSchedTabs();
     renderScheduleSVG();
     updateSchedStatus();
+    scrollSchedStripToNow();
   }
 }
 
@@ -3164,6 +3279,7 @@ function setSchedEditMode(mode) {
   schedEditMode = mode;
   updateSchedTabs();
   renderScheduleSVG();
+  scrollSchedStripToNow();
 }
 
 function updateSchedTabs() {
@@ -3357,6 +3473,8 @@ function renderScheduleSVG() {
   svg.ontouchstart = schedOnDown;
   // click ne part que sur une vraie touche, pas sur un défilement
   svg.onclick = function() { if (!schedUnlocked) nudgeSchedLock(); };
+  applySchedSelDot();
+  updateSchedStrip();
 }
 
 function updateScheduleSVG() {
@@ -3381,6 +3499,7 @@ function updateScheduleSVG() {
       lbl.textContent = tempToLabel(cur[i]);
     }
   });
+  updateSchedStrip();
 }
 
 function svgClientToPoint(svg, clientX, clientY) {
@@ -3398,6 +3517,7 @@ function schedOnDown(e) {
   e.preventDefault();
   const svg = document.getElementById('schedule-svg');
   schedDrag = { idx: parseInt(g.getAttribute('data-idx')), svg: svg };
+  setSchedSel(schedDrag.idx, true);   // amène la carte correspondante à l'écran
   window.addEventListener('mousemove', schedOnMove);
   window.addEventListener('mouseup',   schedOnUp);
   window.addEventListener('touchmove', schedOnMove, { passive: false });
