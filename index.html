@@ -31,6 +31,13 @@
     .logo{color:#949494;display:flex;align-items:center;
       filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
     .logo svg{height:24px;width:auto;display:block;fill:currentColor}
+    /* Numéro de série du poêle auquel l'app est connectée, sous le logo */
+    .hdr-left{display:flex;flex-direction:column;align-items:flex-start;gap:3px}
+    .stove-serial{font-size:.72rem;color:rgba(255,255,255,.7);white-space:nowrap;
+      text-shadow:0 1px 4px rgba(0,0,0,.6)}
+    .stove-serial b{color:#fff;font-weight:700;letter-spacing:.08em;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .stove-serial[hidden]{display:none}
     .status-badge{display:flex;align-items:center;gap:7px;font-size:.82rem;color:#fff;
       background:rgba(0,0,0,.3);border-radius:20px;padding:6px 14px;cursor:pointer}
     .status-dot{width:11px;height:11px;border-radius:50%;background:#e74c3c;
@@ -466,6 +473,7 @@
 
   <!-- ── Header ── -->
   <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 2px">
+    <div class="hdr-left">
     <div class="logo">
       <svg viewBox="0 0 415.885 92.604" role="img" aria-label="WoodMood">
         <path d="M7.999,0L39.76,0C45.67,0 53.161,4.791 56.492,10.7L96.634,81.904C99.965,87.813 97.875,92.604 91.966,92.604L60.205,92.604C54.295,92.604 46.804,87.813 43.473,81.904L3.331,10.7C0,4.791 2.09,0 7.999,0Z"/>
@@ -474,6 +482,8 @@
         <path d="M276.453,0L308.272,0C314.182,0 316.265,4.791 312.924,10.7L272.676,81.904C269.336,87.813 261.837,92.604 255.928,92.604L224.108,92.604C218.199,92.604 216.116,87.813 219.457,81.904L259.705,10.7C263.045,4.791 270.543,0 276.453,0Z"/>
         <path d="M323.848,0L355.634,0C361.543,0 369.037,4.791 372.372,10.7L412.551,81.904C415.885,87.813 413.798,92.604 407.888,92.604L376.102,92.604C370.193,92.604 362.699,87.813 359.365,81.904L319.186,10.7C315.851,4.791 317.938,0 323.848,0Z"/>
       </svg>
+    </div>
+    <div class="stove-serial" id="stove-serial" hidden>Poêle <b id="stove-serial-code"></b></div>
     </div>
     <div style="display:flex;align-items:center;gap:10px">
       <div class="status-badge" onclick="toggleConnPanel()">
@@ -1059,7 +1069,7 @@
 
   <!-- ── Footer ── -->
   <div style="text-align:center;font-size:.72rem;color:rgba(255,255,255,.5);padding-bottom:8px">
-    WoodMood · <span id="footer-serial">—</span><span id="footer-ota"></span>
+    WoodMood · <span id="footer-serial">—</span><span id="footer-uptime"></span><span id="footer-ota"></span>
   </div>
 
 </div>
@@ -1473,6 +1483,7 @@ function saveAndConnect() {
 
 function connect() {
   prefix = 'WoodMood' + cfg.serial;
+  showStoveSerial(cfg.serial);
   // Nouvelle connexion, éventuellement vers un autre poêle : la preuve de vie
   // précédente ne vaut plus rien.
   stoveSeenMs = 0;
@@ -1564,12 +1575,23 @@ function connect() {
 
 function disconnect() {
   if (client) { try { client.end(true); } catch(e){} client = null; }
+  showStoveSerial('');
   stoveSeenMs = 0;
   linkRefused = false;
   clearTimeout(refusedRetry);
   updateLinkUi();
   document.getElementById('conn-card').style.display = '';
   fillForm();
+}
+
+// Affiche le numéro de série du poêle visé (en-tête + pied de page) : avec
+// plusieurs poêles, c'est le seul moyen de voir lequel on pilote. Vide = aucun.
+function showStoveSerial(serial) {
+  const box = document.getElementById('stove-serial');
+  document.getElementById('stove-serial-code').textContent = serial || '';
+  box.hidden = !serial;
+  document.getElementById('footer-serial').textContent = serial || '—';
+  if (!serial) document.getElementById('footer-uptime').textContent = '';
 }
 
 function setDotState(s) {
@@ -1987,7 +2009,7 @@ function applyFull(d) {
   if (d.system_state  !== undefined) { remoteStateReceived = true; if (!isLocked('system_state')) applySystemState(d.system_state); }
   if (d.uptime !== undefined) {
     const h = Math.floor(d.uptime/3600), m = Math.floor((d.uptime%3600)/60);
-    document.getElementById('footer-serial').textContent = 'up ' + h + 'h ' + m + 'm';
+    document.getElementById('footer-uptime').textContent = '  ·  up ' + h + 'h ' + m + 'm';
   }
   if (d.local_ip && d.local_ip !== '0.0.0.0') {
     const el = document.getElementById('footer-ota');
