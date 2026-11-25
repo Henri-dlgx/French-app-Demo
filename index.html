@@ -123,6 +123,29 @@
       padding:3px 10px;font-size:.8rem;font-weight:600;letter-spacing:.04em}
     .reload-msg{font-size:.84rem;opacity:.85}
 
+    /* ── Carte « Mise à jour du poêle » (status/ota) ──
+       Même emplacement que les bannières ci-dessus. Bleu : ce n'est ni une panne
+       ni une action urgente ; vert une fois réussie, rouge si le poêle est revenu
+       à l'ancienne version. */
+    #ota-banner{display:none;background:#1f5f8b;color:#fff;border-radius:18px;
+      padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
+    #ota-banner.show{display:block}
+    #ota-banner.ok{background:#1e7a46}
+    #ota-banner.bad{background:#a93226}
+    .ota-title{font-size:1.05rem;font-weight:700;margin-bottom:6px}
+    .ota-msg{font-size:.84rem;opacity:.9;margin-bottom:10px}
+    .ota-notes{font-size:.82rem;background:rgba(255,255,255,.12);border-radius:10px;
+      padding:8px 10px;margin-bottom:10px;white-space:pre-line}
+    .ota-steps{list-style:none;margin:0 0 12px;padding:0;font-size:.82rem}
+    .ota-steps li{padding:2px 0;opacity:.6}
+    .ota-steps li.done{opacity:.9}
+    .ota-steps li.now{opacity:1;font-weight:700}
+    .ota-bar{height:7px;background:rgba(255,255,255,.2);border-radius:4px;overflow:hidden;margin:2px 0 10px}
+    .ota-bar i{display:block;height:100%;background:#fff;transition:width .4s}
+    .ota-actions{display:flex;gap:8px}
+    .ota-actions .btn{flex:1;color:#fff}
+    .ota-info{font-size:.82rem;opacity:.75}
+
     /* ── Joint (gasket) service banner — same slot as the fault banner ── */
     #joint-banner{display:none;background:#5a3410;color:#fff;border-radius:18px;
       padding:18px;box-shadow:0 4px 20px rgba(0,0,0,.35)}
@@ -618,6 +641,21 @@
     </div>
   </div>
 
+  <!-- ── Carte « Mise à jour du poêle » ──
+       Pilotée uniquement par le topic RETENU status/ota. C'est le POÊLE qui sait
+       s'il doit être mis à jour : il lit son manifeste signé 1 min après chaque
+       démarrage puis toutes les 12 h à l'arrêt, et publie avail > build quand une
+       version plus récente l'attend. L'app ne fait qu'afficher et envoyer
+       cmd/ota install | cancel | check. Rendu : renderOta(). -->
+  <div id="ota-banner">
+    <div class="ota-title" id="ota-title">Mise à jour disponible</div>
+    <div class="ota-msg" id="ota-msg"></div>
+    <div class="ota-notes" id="ota-notes" style="display:none"></div>
+    <ul class="ota-steps" id="ota-steps"></ul>
+    <div class="ota-bar" id="ota-bar" style="display:none"><i id="ota-bar-fill" style="width:0"></i></div>
+    <div class="ota-actions" id="ota-actions"></div>
+  </div>
+
   <!-- ── Temperature ── -->
   <div class="card-warm">
     <!-- Principale : température ambiante BLE + température souhaitée -->
@@ -924,6 +962,20 @@
       </div>
 
       <div class="divider"></div>
+
+      <!-- Logiciel du poêle (status/ota). Masqué si le firmware n'a pas le
+           client de mise à jour (aucun status/ota reçu). -->
+      <div id="ota-settings" style="display:none">
+        <div class="settings-section">Logiciel du poêle</div>
+        <div class="gap-col" data-needs-stove>
+          <div class="maint-row">
+            <span style="flex:1"><span id="ota-cur">—</span><br><span class="ota-info" id="ota-cur-sub"></span></span>
+            <button class="btn btn-tan btn-sm" style="flex:none" id="ota-check-btn" onclick="otaCheck()">Rechercher</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider" id="ota-settings-div" style="display:none"></div>
 
       <!-- Notifications — désormais envoyées par le poêle lui-même via ntfy.
            L'ancien système de notifications push de l'application (relais +
@@ -1684,6 +1736,7 @@ function updateLinkUi() {
   const live   = stoveLive();
 
   document.body.classList.toggle('link-down', !live);
+  if (typeof renderOta === 'function') renderOta();
 
   // Pas encore identifié : c'est le panneau de connexion qui parle, pas de bandeau.
   if (!client) {
@@ -1893,6 +1946,9 @@ function onMessage(topic, payloadBuf, packet) {
   // Demande de rechargement (chargement manuel) — topic RETENU, publié par le
   // firmware uniquement sur changement d'état ou de numéro de rappel.
   if (sub === 'status/reload_req') { applyReloadReq(payload); return; }
+  // Mise à jour à distance — topic RETENU {state, why, build, avail, aver, notes,
+  // pct, err, last}, publié par OtaManager à chaque changement d'état.
+  if (sub === 'status/ota') { applyOta(payload); return; }
   if (sub === 'status/log_level_l') {
     if (ignoreEcho('log_l', parseInt(payload) || 0)) return;
     const prevL = logL;
@@ -2395,6 +2451,202 @@ function renderReloadPrompt() {
                       : elapsedMin === 1 ? 'demandé il y a 1 minute'
                       : 'demandé il y a ' + elapsedMin + ' minutes';
   }
+}
+
+// ============================================================
+// MISE À JOUR DU POÊLE (status/ota ← OtaManager, cmd/ota →)
+// ============================================================
+// Le poêle décide lui-même s'il a besoin d'une mise à jour (manifeste signé lu au
+// démarrage puis toutes les 12 h) : « avail > build » = une version plus récente
+// l'attend. L'app affiche la carte et transmet le choix de l'utilisateur.
+// Une fois « install » envoyé, tout est automatique côté poêle :
+//   wait_idle → downloading (poêle immobile, même chaud) → staged
+//   → attend : arrêté par l'utilisateur, < 50 °C, portes fermées, 08 h–21 h
+//   → rebooting → trial (contrôles ~1–5 min) → confirmed | rolled_back
+// Il ne se rallume jamais tout seul après l'installation.
+const LS_OTA_LATER = 'woodmood_ota_later' + LS_NS;   // {build, until} : « Plus tard »
+const OTA_LATER_MS = 24 * 3600 * 1000;
+let otaStatus  = null;     // dernier status/ota (objet), null = firmware sans client
+let otaSeenOk  = 0;        // build déjà affiché « réussi » (on ne le remontre pas)
+let otaSeenBad = 0;        // build dont l'échec a été lu (bouton OK)
+let otaSentMs  = 0;        // dernier envoi d'une commande (bouton occupé 4 s)
+
+// why → ce que l'utilisateur doit faire (ou attendre).
+const OTA_WHY = {
+  state: "Arrêtez le poêle (bouton Arrêt) : l'installation ne se fait jamais pendant une flambée.",
+  temp:  'Le poêle refroidit — installation sous 50 °C.',
+  door:  'Fermez la porte du foyer et les trappes de chargement.',
+  hours: "L'installation se fait entre 8 h et 21 h.",
+  busy:  'Le poêle termine une action en cours…',
+  wifi:  'Le poêle attend sa connexion Wi-Fi.',
+  heap:  'Le poêle est occupé, nouvel essai dans un instant.',
+};
+
+function applyOta(payload) {
+  try { otaStatus = JSON.parse(payload); } catch (_) { return; }
+  renderOta();
+}
+
+function otaLater() {
+  if (!otaStatus) return;
+  try { localStorage.setItem(LS_OTA_LATER, JSON.stringify({ build: otaStatus.avail, until: Date.now() + OTA_LATER_MS })); } catch (_) {}
+  renderOta();
+  showToast('Rappel demain — aussi dans Paramètres › Logiciel du poêle');
+}
+
+function otaSend(cmd, toast) {
+  if (!publish('cmd/ota', cmd)) return;
+  otaSentMs = Date.now();
+  if (toast) showToast(toast);
+  renderOta();
+  setTimeout(renderOta, 4100);
+}
+function otaInstall() {
+  try { localStorage.removeItem(LS_OTA_LATER); } catch (_) {}
+  otaSend('install', 'Mise à jour lancée — le poêle s’en occupe');
+}
+function otaCancel() {
+  if (!confirm('Annuler cette mise à jour ? Le poêle la proposera de nouveau plus tard.')) return;
+  otaSend('cancel', 'Mise à jour annulée');
+}
+function otaCheck() { otaSend('check', 'Recherche d’une mise à jour…'); }
+
+// Contrôles de l'essai (OtaManager::trialResults) → mots compréhensibles.
+const OTA_CHECK_FR = { up: 'redémarrages', exp: 'carte d\u2019extension', tc: 'sonde de température',
+  cred: 'identifiants', heap: 'mémoire', net: 'connexion internet', reset: 'redémarrage inattendu', doors: 'portes' };
+// last.st = "up:ok exp:ok tc:fail … fail:tc,net" (OtaManager) : on ne garde que
+// la liste après « fail: ».
+function otaChecks(st) {
+  const m = String(st).match(/fail:([a-z,]+)/);
+  return (m ? m[1] : String(st)).split(/[\s,;]+/).filter(Boolean)
+    .map(w => OTA_CHECK_FR[w.replace(/[^a-z]/g, '')] || w).join(', ');
+}
+
+function otaVer(v, b) { return (v ? v : 'version') + (b ? ' (n° ' + b + ')' : ''); }
+
+function renderOta() {
+  const box = document.getElementById('ota-banner');
+  if (!box) return;
+  const d = otaStatus;
+  const live = stoveLive();
+  const busySend = Date.now() - otaSentMs < 4000;
+
+  // ── Paramètres › Logiciel du poêle ──
+  const sset = document.getElementById('ota-settings');
+  if (sset) {
+    sset.style.display = d ? '' : 'none';
+    document.getElementById('ota-settings-div').style.display = d ? '' : 'none';
+    if (d) {
+      document.getElementById('ota-cur').textContent = 'Installé : ' + otaVer(d.ver, d.build);
+      const pending = d.avail > d.build;
+      document.getElementById('ota-cur-sub').textContent = pending
+        ? 'Nouvelle version disponible : ' + otaVer(d.aver, d.avail)
+        : (d.state === 'idle' || d.state === 'confirmed') ? 'À jour' : '';
+      const cb = document.getElementById('ota-check-btn');
+      cb.textContent = pending && ['idle', 'available'].includes(d.state) ? 'Installer' : 'Rechercher';
+      cb.onclick = pending && ['idle', 'available'].includes(d.state) ? otaInstall : otaCheck;
+      cb.disabled = busySend || !['idle', 'available', 'rolled_back'].includes(d.state);
+    }
+  }
+
+  // ── Carte de l'écran principal ──
+  const title = document.getElementById('ota-title');
+  const msg   = document.getElementById('ota-msg');
+  const notes = document.getElementById('ota-notes');
+  const steps = document.getElementById('ota-steps');
+  const bar   = document.getElementById('ota-bar');
+  const act   = document.getElementById('ota-actions');
+  const hide  = () => { box.classList.remove('show', 'ok', 'bad'); };
+  if (!d) return hide();
+  // Retenu : sans poêle en ligne, l'état peut dater. Exception : pendant le
+  // redémarrage d'installation le poêle est hors ligne par nature.
+  if (!live && !['rebooting', 'trial'].includes(d.state)) return hide();
+
+  const last = d.last || {};
+  let later = null;
+  try { later = JSON.parse(localStorage.getItem(LS_OTA_LATER) || 'null'); } catch (_) {}
+  const snoozed = later && later.build === d.avail && Date.now() < later.until;
+
+  box.classList.remove('ok', 'bad');
+  notes.style.display = 'none';
+  bar.style.display = 'none';
+  steps.innerHTML = '';
+  act.innerHTML = '';
+  const why = d.why && OTA_WHY[d.why] ? OTA_WHY[d.why] : '';
+  const stepList = (cur) => {
+    const L = ['Téléchargement', 'Prête — en attente du bon moment', 'Installation et redémarrage', 'Vérification de la nouvelle version'];
+    steps.innerHTML = L.map((t, i) => `<li class="${i < cur ? 'done' : i === cur ? 'now' : ''}">${i < cur ? '✓' : i === cur ? '›' : '·'} ${t}</li>`).join('');
+  };
+  const btn = (cls, text, fn) => {
+    const b = document.createElement('button');
+    b.className = 'btn ' + cls; b.textContent = text; b.onclick = fn; b.disabled = busySend;
+    act.appendChild(b);
+  };
+
+  switch (d.state) {
+    case 'available':
+    case 'idle': {
+      if (!(d.avail > d.build) || snoozed) return hide();
+      title.textContent = '⬆️ Mise à jour disponible';
+      msg.textContent = 'Une nouvelle version du logiciel du poêle est prête : ' + otaVer(d.aver, d.avail) + '. '
+        + "Le poêle la télécharge maintenant puis l'installe tout seul quand il est arrêté, froid et portes fermées. "
+        + "Il ne se rallume pas tout seul ensuite.";
+      if (d.notes) { notes.textContent = d.notes; notes.style.display = ''; }
+      if (d.err) msg.textContent += ' (Essai précédent : ' + d.err + '.)';
+      btn('btn-resolve', 'Installer', otaInstall);
+      btn('btn-cancel', 'Plus tard', otaLater);
+      break;
+    }
+    case 'wait_idle':
+      title.textContent = '⬆️ Mise à jour en préparation';
+      msg.textContent = why || 'Le téléchargement commence dès que le poêle est immobile.';
+      stepList(0);
+      btn('btn-cancel', 'Annuler', otaCancel);
+      break;
+    case 'downloading':
+      title.textContent = '⬇️ Téléchargement de la mise à jour';
+      msg.textContent = 'Le poêle continue de fonctionner normalement pendant le téléchargement.';
+      bar.style.display = '';
+      document.getElementById('ota-bar-fill').style.width = (d.pct || 0) + '%';
+      stepList(0);
+      btn('btn-cancel', 'Annuler', otaCancel);
+      break;
+    case 'staged':
+      title.textContent = '⬆️ Mise à jour prête à installer';
+      msg.textContent = why || "Toutes les conditions sont réunies : l'installation démarre dans quelques minutes.";
+      stepList(1);
+      btn('btn-cancel', 'Annuler', otaCancel);
+      break;
+    case 'rebooting':
+      title.textContent = '🔄 Installation en cours';
+      msg.textContent = "Le poêle redémarre sur la nouvelle version. N'éteignez pas le poêle. La connexion revient dans une minute environ.";
+      stepList(2);
+      break;
+    case 'trial':
+      title.textContent = '🔍 Vérification de la nouvelle version';
+      msg.textContent = 'Le poêle vérifie que tout fonctionne (1 à 5 minutes). En cas de problème, il revient seul à l’ancienne version.';
+      stepList(3);
+      break;
+    case 'confirmed':
+      if (otaSeenOk === d.build) return hide();
+      box.classList.add('ok');
+      title.textContent = '✓ Mise à jour réussie';
+      msg.textContent = 'Le poêle fonctionne avec la nouvelle version ' + otaVer(d.ver, d.build) + '. Vous pouvez le rallumer.';
+      btn('btn-cancel', 'OK', () => { otaSeenOk = d.build; renderOta(); });
+      break;
+    case 'rolled_back':
+      if (otaSeenBad && otaSeenBad === (+last.build || 1)) return hide();
+      box.classList.add('bad');
+      title.textContent = '↩︎ Mise à jour annulée par le poêle';
+      msg.textContent = 'La nouvelle version n’a pas passé les vérifications : le poêle est revenu à la version '
+        + otaVer(d.ver, d.build) + ' et fonctionne normalement. Il réessaiera une fois de lui-même.'
+        + (last.st ? ' (Contrôle en échec : ' + otaChecks(last.st) + ')' : '');
+      btn('btn-cancel', 'OK', () => { otaSeenBad = +last.build || 1; renderOta(); });
+      break;
+    default:
+      return hide();
+  }
+  box.classList.add('show');
 }
 
 // ============================================================
