@@ -2489,8 +2489,48 @@ function otaVer(v, b) { return (v ? v : 'version') + (b ? ' (n° ' + b + ')' : '
 const otaPending = d => !!d && d.avail > d.build;
 const otaRunning = d => !!d && ['wait_idle', 'downloading', 'staged', 'rebooting', 'trial'].includes(d.state);
 
+// ── Table cachée des versions (fw/table.json, même site que l'app) ──────────
+// Écrite par `ota_test.py publish` à côté des manifestes signés (fw/m/) et des
+// images chiffrées (fw/r/) que le poêle télécharge. Jamais affichée : elle ne
+// sert qu'à savoir, dès l'ouverture de l'app, si le poêle connecté est en
+// retard. Clé = identifiant de mise à jour du poêle (« id » de status/ota,
+// dérivé de sa clé — pas le numéro de série, qui est aussi son identifiant
+// MQTT). Format : {"stoves": {"<id>": {"build": 101, "ver": "v5.4"}}}
+// Si la table annonce plus récent que ce que le poêle connaît (build ET avail),
+// l'app lui envoie discrètement cmd/ota check : c'est toujours le POÊLE qui
+// vérifie la signature et publie avail → la pastille apparaît. Sans réponse
+// signée valide, rien ne s'affiche.
+const OTA_TABLE_URL = 'fw/table.json';
+let otaTable   = null;     // table lue (null = pas encore / illisible)
+let otaTableMs = 0;        // dernière lecture
+let otaNudged  = '';       // « id:build » déjà demandé dans cette session
+
+async function otaLoadTable() {
+  if (Date.now() - otaTableMs < 10 * 60 * 1000) return otaTable;   // au plus toutes les 10 min
+  otaTableMs = Date.now();
+  try {
+    const r = await fetch(OTA_TABLE_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (r.ok) otaTable = await r.json();
+  } catch (_) { /* hors ligne ou table absente : le poêle vérifie seul toutes les 12 h */ }
+  return otaTable;
+}
+
+async function otaNudge() {
+  const d = otaStatus;
+  if (!d || !d.id || !['idle', 'available'].includes(d.state)) return;
+  const t = await otaLoadTable();
+  const want = t && t.stoves && t.stoves[d.id];
+  if (!want || !(want.build > d.build) || d.avail >= want.build) return;
+  const key = d.id + ':' + want.build;
+  if (otaNudged === key || !stoveLive()) return;
+  otaNudged = key;
+  console.log('[OTA] table: build', want.build, '> stove', d.build, '/ avail', d.avail, '→ cmd/ota check');
+  client.publish(prefix + '/cmd/ota', 'check', { qos: 1 });   // silencieux : pas de toast
+}
+
 function applyOta(payload) {
   try { otaStatus = JSON.parse(payload); } catch (_) { return; }
+  otaNudge();
   const d = otaStatus, last = d.last || {};
   // Résultat final : un simple toast, une seule fois par build et par issue.
   const key = d.state === 'confirmed' ? 'ok' + d.build : d.state === 'rolled_back' ? 'ko' + last.build : '';
